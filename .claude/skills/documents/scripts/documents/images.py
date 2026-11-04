@@ -4,6 +4,7 @@ import hashlib
 import io
 import os
 import re
+import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -16,6 +17,10 @@ __all__ = ["make_images", "ToolUnavailable", "Unreadable", "UsageProblem"]
 _OLD_AFTER_SECONDS = 86400
 _MEMBER_LIMIT = 256 * 1024 * 1024
 _NAME_BYTES_LIMIT = 180
+_LONG_SIDE = 1568
+# rhwp는 1.0배에서 A4 긴 변이 1123px이라 차트를 읽기에 작다. --vlm-target은 키우지 않으므로 2배로 그려 줄인다.
+_RHWP_SCALE = 2.0
+_RHWP_SCALE_LIMIT = 8.0
 _KEPT_FORMATS = {"PNG": ".png", "JPEG": ".jpg", "GIF": ".gif", "WEBP": ".webp"}
 _DOCTOR_HINT = "`doctor --fix`로 설치하거나 상태를 확인한다"
 _BAD_NAME = re.compile(r'[/\\\x00-\x1f]')
@@ -96,7 +101,30 @@ def _check_pages(pages, count: int) -> None:
         raise UsageProblem(f"--pages가 범위 밖이다: {beyond[0]}. 이 문서는 {count}쪽이다")
 
 
-def _render_pdf(path: str, pages, folder_of, prefix: str) -> dict:
+def _page_name(prefix: str, page: int, crop) -> str:
+    if crop is None:
+        return f"{prefix}_p{page:04}.png"
+    mark = hashlib.sha256(repr(crop).encode()).hexdigest()[:8]
+    return f"{prefix}_p{page:04}_c{mark}.png"
+
+
+def _shape_rendered(raw_path, target, crop) -> None:
+    """rhwp가 그린 쪽을 자르고 긴 변을 맞춰 target에 쓴다."""
+    from PIL import Image
+
+    with Image.open(raw_path) as image:
+        result = image
+        if crop:
+            width, height = image.size
+            left, top, right, bottom = crop
+            result = image.crop((round(left * width), round(top * height), round(right * width), round(bottom * height)))
+        if max(result.size) > _LONG_SIDE:
+            ratio = _LONG_SIDE / max(result.size)
+            result = result.resize((max(1, round(result.width * ratio)), max(1, round(result.height * ratio))))
+        result.save(target, "PNG")
+
+
+def _render_pdf(path: str, pages, folder_of, prefix: str, crop) -> dict:
     if not pages:
         raise UsageProblem("pdf는 --pages가 필요하다")
     try:
@@ -104,12 +132,12 @@ def _render_pdf(path: str, pages, folder_of, prefix: str) -> dict:
         folder = folder_of()
         images = []
         for page in pages:
-            target = folder / f"{prefix}_p{page:04}.png"
+            target = folder / _page_name(prefix, page, crop)
             if _already_made(target):
                 width, height = _size_of(target)
             else:
                 with _replacing(target) as partial:
-                    width, height = pdf.render_page(path, page, partial)
+                    width, height = pdf.render_page(path, page, partial, _LONG_SIDE, crop)
             images.append({"page": page, "path": str(target.resolve()), "width": width, "height": height, "source_name": None})
     except pdf.DocumentError as error:
         raise Unreadable(error.reason, f"PDF를 열 수 없다: {error.reason}") from error
@@ -118,7 +146,7 @@ def _render_pdf(path: str, pages, folder_of, prefix: str) -> dict:
     return {"kind": "pdf", "source": "render", "page_basis": "physical", "images": images, "skipped": []}
 
 
-def _render_hancom(path: str, kind: str, pages, folder_of, prefix: str) -> dict:
+def _render_hancom(path: str, kind: str, pages, folder_of, prefix: str, crop) -> dict:
     if not pages:
         raise UsageProblem(f"{kind}는 --pages가 필요하다. 쪽 번호는 `read` 머리 줄의 page_count와 `search`의 pages로 안다")
     error_reason = extract.extract(path).error
@@ -132,10 +160,15 @@ def _render_hancom(path: str, kind: str, pages, folder_of, prefix: str) -> dict:
         folder = folder_of()
         images = []
         for page in pages:
-            target = folder / f"{prefix}_p{page:04}.png"
+            target = folder / _page_name(prefix, page, crop)
             if not _already_made(target):
-                with _replacing(target) as partial:
-                    rhwp.render_page(path, binary, page, partial)
+                scale = _RHWP_SCALE
+                if crop:
+                    scale = min(_RHWP_SCALE_LIMIT, _RHWP_SCALE / max(crop[2] - crop[0], crop[3] - crop[1]))
+                with tempfile.TemporaryDirectory(prefix="documents-page-") as folder_raw, _replacing(target) as partial:
+                    raw = os.path.join(folder_raw, "raw.png")
+                    rhwp.render_page(path, binary, page, raw, scale)
+                    _shape_rendered(raw, partial, crop)
             width, height = _size_of(target)
             images.append({"page": page, "path": str(target.resolve()), "width": width, "height": height, "source_name": None})
     except rhwp.ToolError as error:
@@ -223,7 +256,7 @@ def _embedded(path: str, kind: str, pages, folder_of, prefix: str) -> dict:
     return {"kind": kind, "source": "embedded", "page_basis": basis, "images": images, "skipped": skipped}
 
 
-def make_images(path: str, *, pages=None, out_dir=None) -> dict:
+def make_images(path: str, *, pages=None, out_dir=None, crop=None) -> dict:
     if not os.path.exists(path):
         raise UsageProblem(f"없는 경로: {path}")
     if os.path.isdir(path):
@@ -251,8 +284,10 @@ def make_images(path: str, *, pages=None, out_dir=None) -> dict:
         return folder
 
     prefix = _prefix(path)
+    if crop and kind not in ("pdf", "hwp", "hwpx"):
+        raise UsageProblem("--crop은 쪽을 그리는 pdf·hwp·hwpx 전용이다")
     if kind == "pdf":
-        return _render_pdf(path, pages, folder_of, prefix)
+        return _render_pdf(path, pages, folder_of, prefix, crop)
     if kind in ("hwp", "hwpx"):
-        return _render_hancom(path, kind, pages, folder_of, prefix)
+        return _render_hancom(path, kind, pages, folder_of, prefix, crop)
     return _embedded(path, kind, pages, folder_of, prefix)

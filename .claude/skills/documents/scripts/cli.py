@@ -77,9 +77,21 @@ def _page_range(text):
     return sorted(pages)
 
 
+def _crop(text):
+    """왼,위,오른,아래를 쪽 대비 0~1 비율로 받는다."""
+    try:
+        left, top, right, bottom = (float(piece) for piece in text.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"--crop은 왼,위,오른,아래 비율 넷이다(예: 0,0.1,1,0.4): {text}") from error
+    if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+        raise argparse.ArgumentTypeError(f"--crop은 0 이상 1 이하이고 왼<오른, 위<아래이다: {text}")
+    return left, top, right, bottom
+
+
 _non_negative.__name__ = "0 이상 정수"
 _positive.__name__ = "1 이상 정수"
 _page_range.__name__ = "쪽 범위"
+_crop.__name__ = "영역"
 
 _TOP_HELP = """Read와 rg가 못 여는 문서(hwp·hwpx·pdf·docx·pptx·xlsx)를 변환 없이 찾고 읽는다. 형식이 달라도 같은 명령이다.
 
@@ -100,7 +112,7 @@ _SEARCH_HELP = """파일 또는 폴더에서 형식을 나누지 않고 말을 �
 
 출력(JSON 하나):
 summary: query, files_scanned, documents_hit, exact_documents, spacing_only_documents, filename_only_documents, seconds, by_folder(루트 바로 아래 폴더별 문서 수), returned, next_offset, notes.
-results[]: 순위순. document(같은 폴더에서 이름이 같은 파일 묶음), filename_match(이름에 걸림, 본문 0이어도 나온다), files, other_files(묶음 안에서 안 걸린 파일), snippets.
+results[]: 순위순. document(같은 폴더에서 이름이 같은 파일 묶음의 이름), filename_match(이름에 걸림, 본문 0이어도 나온다), files, other_files(묶음 안에서 안 걸린 파일의 경로), snippets.
 files[]: path, kind, exact, spacing_variants, 위치, page_basis.
   exact: 질의의 공백이 공백 묶음과 맞는 표기 일치 수.
   spacing_variants: exact 바깥에서 글자 사이 공백까지 허용해 찾은 일치 수. `담합`이 `부담 합리화`에 걸리는 오탐도 여기 든다.
@@ -110,14 +122,14 @@ files[]: path, kind, exact, spacing_variants, 위치, page_basis.
     physical: pdf 물리 쪽 순서. 인쇄된 쪽 번호와 다를 수 있다.
     estimated: hwp·hwpx의 rhwp 조판 기준. 같은 이름 PDF와 어긋나는 쪽이 있다(표본 4~9%).
     slide: pptx 표시 순서. sheet: xlsx 시트 순서. none: docx이거나 쪽을 정할 도구가 없다.
-snippets[]: path, page(hwp·hwpx는 null, xlsx는 칸 주소), exact, text. text는 접은 글이고 exact가 먼저 온다. 같은 글은 묶음 안에서 한 번만 나온다.
-coverage: 이번 실행이 못 본 범위. 목록은 20개까지이고 나머지 수는 more다. 비어 있어도 그림 속 글자는 본 적이 없다.
+snippets[]: kind(어느 파일인지), page(hwp·hwpx는 null, xlsx는 칸 주소), exact, text. text는 접은 글이고 exact가 먼저 온다. 같은 글은 묶음 안에서 한 번만 나온다.
+coverage: 이번 실행이 못 본 범위. 목록은 5개까지이고 나머지 수는 more이며 --offset이 0이 아니면 수만 준다. 전부 보려면 --coverage-only를 쓴다. 비어 있어도 그림 속 글자는 본 적이 없다.
   unreadable: 못 읽은 파일. reason은 encrypted, distribution(배포용), corrupt, not_a_document, unsupported, too_large, timeout, crashed, io.
   no_text: 읽었지만 공백 뺀 글자가 50 미만인 파일.
   image_only_pages: pdf의 공백 뺀 글자 20 미만인 쪽.
   embedded_images: pdf 밖 형식의 그림 개수. 쪽은 모른다.
   not_read: 대상이 아니라 열지 않은 파일의 확장자별 수.
-결과가 2만 자를 넘으면 잘리고 next_offset을 준다. 그 값을 --offset에 주면 이어진다. 결과 한 건은 상한을 넘어도 나온다.
+결과가 --max-chars를 넘으면 잘리고 next_offset을 준다. 그 값을 --offset에 주면 이어지지만 폴더를 다시 읽는다. 많은 결과를 걸러 볼 때는 --limit과 --max-chars를 크게 주어 파일로 한 번에 받는다. 결과 한 건은 상한을 넘어도 나온다.
 
 종료 코드:
 0: 정상. 0건과 못 읽은 파일이 있어도 0이다(coverage로 보고).
@@ -188,7 +200,8 @@ _IMAGE_HELP = """쪽 그림이나 내장 그림을 PNG 등으로 만들고 경�
 
 형식별:
   pdf: 쪽을 그린다. 긴 변 1568px. --pages 필수. source는 render, page_basis는 physical.
-  hwp·hwpx: rhwp로 쪽을 그린다. --pages 필수. source는 render, page_basis는 estimated. 시스템 글꼴로 그려 원본과 조금 다를 수 있다.
+  hwp·hwpx: rhwp로 쪽을 그린다. 긴 변 1568px까지. --pages 필수. source는 render, page_basis는 estimated. 시스템 글꼴로 그려 원본과 조금 다를 수 있다.
+  차트의 작은 글자처럼 쪽 그림으로 안 보이면 --crop으로 그 영역을 다시 그린다. 그림 파일을 따로 꺼내 확대할 필요가 없다.
   pptx: 슬라이드의 내장 그림을 꺼낸다. --pages로 슬라이드를 고른다. source는 embedded, page_basis는 slide.
   docx·xlsx: 내장 그림을 모두 꺼낸다. page는 null이고 --pages는 오류다. source는 embedded, page_basis는 none.
 
@@ -200,7 +213,7 @@ path는 절대 경로다. BMP는 PNG로 바꾼다. EMF·WMF처럼 못 여는 형
 
 종료 코드:
 0: 정상.
-2: 인자 오류(없는 경로, pdf·hwp·hwpx에 --pages 없음, 범위 밖 --pages면 쪽 수를 말한다, 쪽이 없는 형식에 --pages, 대상 밖 파일).
+2: 인자 오류(없는 경로, pdf·hwp·hwpx에 --pages 없음, 범위 밖 --pages면 쪽 수를 말한다, 쪽이 없는 형식에 --pages, 다른 형식의 --crop, 대상 밖 파일).
 3: 대상 파일을 못 읽거나 쓸 곳에 쓸 수 없음. stdout은 {"error": {"code", "message"}}. 작업 폴더에 쓸 수 없으면 메시지가 --out-dir을 말한다.
 4: rhwp가 없거나 실패함. 메시지가 `doctor --fix`를 말한다.
 130: 중단.
@@ -232,6 +245,7 @@ def _build_parser():
     search.add_argument("--glob", metavar="G", help="루트 기준 상대 경로에 fnmatch로 대조한다(`*`는 `/`도 넘는다)")
     search.add_argument("--limit", type=_positive, default=20, help="한 번에 낼 문서 수(기본 20)")
     search.add_argument("--offset", type=_non_negative, default=0, help="건너뛸 문서 수(기본 0). next_offset을 그대로 준다")
+    search.add_argument("--max-chars", type=_positive, default=20000, help="결과 부분의 문자 상한(기본 20000)")
     search.add_argument("--snippets", type=_non_negative, default=3, help="문서마다 낼 스니펫 수(기본 3)")
     search.add_argument("--context", type=_non_negative, default=40, help="스니펫의 앞뒤 글자 수(기본 40)")
     search.add_argument("--coverage-only", action="store_true", help="결과 없이 범위 항목을 한 줄에 하나씩 NDJSON으로 전부 낸다. 상한이 없다. 줄마다 type(unreadable, no_text, image_only_pages, embedded_images, not_read)과 path가 있다. QUERY는 범위에 영향을 주지 않는다")
@@ -247,6 +261,7 @@ def _build_parser():
     image = commands.add_parser("image", help="쪽 그림 또는 내장 그림을 만든다", description=_IMAGE_HELP, formatter_class=_formatter)
     image.add_argument("file", metavar="FILE", help="대상 파일")
     image.add_argument("--pages", metavar="R", type=_page_range, help="쪽 또는 슬라이드(3, 1-5, 1,3,5-7). 쪽은 1부터다. 범위는 쓰는 쪽이 정한다")
+    image.add_argument("--crop", metavar="L,T,R,B", type=_crop, help="pdf·hwp·hwpx 전용. 쪽의 이 영역만 긴 변까지 확대해 그린다. 왼,위,오른,아래를 쪽 대비 0~1 비율로 준다(원점은 왼쪽 위, 예: 0,0.1,1,0.4)")
     image.add_argument("--out-dir", metavar="D", help="그림을 쓸 폴더. 없으면 만든다")
 
     text = commands.add_parser("text", help="뽑은 글자를 흘려보낸다", description=_TEXT_HELP, formatter_class=_formatter)
@@ -270,7 +285,7 @@ def _run_search(args):
         for record in search.coverage_records(args.paths, args.glob, query):
             _print_json(record)
     else:
-        _print_json(search.run(args.paths, args.glob, query, limit=args.limit, offset=args.offset))
+        _print_json(search.run(args.paths, args.glob, query, limit=args.limit, offset=args.offset, max_chars=args.max_chars))
     return EXIT_OK
 
 
@@ -293,7 +308,7 @@ def _run_read(args):
 def _run_image(args):
     from documents import images
 
-    _print_json(images.make_images(args.file, pages=args.pages, out_dir=args.out_dir))
+    _print_json(images.make_images(args.file, pages=args.pages, out_dir=args.out_dir, crop=args.crop))
     return EXIT_OK
 
 

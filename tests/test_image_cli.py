@@ -59,8 +59,9 @@ def test_hwp_page_goes_through_rhwp(cli, tmp_path, fake_rhwp):
     env = {"FAKE_RHWP_PAGES": json.dumps(["1", "2", "3"])}
     data = cli("image", path, "--pages", "2", cwd=tmp_path, path_prefix=fake_rhwp, env=env).json
     assert data["kind"] == "hwp" and data["source"] == "render" and data["page_basis"] == "estimated"
+    # 쪽을 pdf와 같은 해상도로 보려고 2배로 그린다(기본 794px로는 차트를 읽지 못해 스크립트를 다시 짠다).
     with Image.open(data["images"][0]["path"]) as image:
-        assert image.size == (121, 80)
+        assert image.size == (242, 160)
 
 
 def test_hwp_without_rhwp_is_exit_4(cli, tmp_path):
@@ -300,3 +301,49 @@ def test_no_partial_file_is_left_behind(cli, tmp_path):
     path = pdf(tmp_path / "a.pdf", "one " + LONG)
     cli("image", path, "--pages", "1", cwd=tmp_path)
     assert not [name for name in os.listdir(tmp_path / ".documents/pages") if name.endswith(".part")]
+
+
+def rendered(cli, path, *args, cwd, **options):
+    result = cli("image", path, *args, cwd=cwd, **options)
+    assert result.code == 0, result.err
+    return result.json["images"]
+
+
+def test_pdf_crop_zooms_a_region_to_the_long_side(cli, tmp_path):
+    path = pdf(tmp_path / "a.pdf", "one " + LONG)
+    whole = rendered(cli, path, "--pages", "1", cwd=tmp_path)[0]
+    half = rendered(cli, path, "--pages", "1", "--crop", "0,0,1,0.5", cwd=tmp_path)[0]
+    assert half["path"] != whole["path"]
+    # 612x792쪽의 위 절반은 612x396이라 가로가 긴 변이 된다.
+    assert half["width"] == 1568 and abs(half["height"] - 1568 * 396 / 612) <= 2
+    with Image.open(half["path"]) as image:
+        assert image.size == (half["width"], half["height"])
+
+
+def test_crop_keeps_top_left_origin(cli, tmp_path):
+    # 합성 PDF의 글은 위쪽에 있고 아래쪽은 비어 있다. 원점이 뒤집히면 비어 있는 쪽을 자른다.
+    path = pdf(tmp_path / "a.pdf", "dark text " * 8)
+    top = rendered(cli, path, "--pages", "1", "--crop", "0,0,1,0.2", cwd=tmp_path)[0]
+    bottom = rendered(cli, path, "--pages", "1", "--crop", "0,0.8,1,1", cwd=tmp_path)[0]
+    with Image.open(top["path"]) as image:
+        assert image.convert("L").getextrema()[0] < 128
+    with Image.open(bottom["path"]) as image:
+        assert image.convert("L").getextrema()[0] > 128
+
+
+def test_hwp_crop_renders_larger_then_cuts(cli, tmp_path, fake_rhwp):
+    path = hwp(tmp_path / "a.hwp", "x " + LONG)
+    env = {"FAKE_RHWP_PAGES": json.dumps(["1"])}
+    entry = rendered(cli, path, "--pages", "1", "--crop", "0,0,0.5,0.5", cwd=tmp_path, path_prefix=fake_rhwp, env=env)[0]
+    # 가로세로 절반이므로 배율을 두 배(4배)로 올려 120x80쪽의 480x320에서 240x160을 자른다.
+    assert (entry["width"], entry["height"]) == (240, 160)
+
+
+@pytest.mark.parametrize("value", ["1,2,3", "a,b,c,d", "0.5,0,0.5,1", "0,0,1,1.5", "-0.1,0,1,1", "0.9,0,0.1,1"])
+def test_bad_crop_is_exit_2(cli, tmp_path, value):
+    assert cli("image", pdf(tmp_path / "a.pdf", "one " + LONG), "--pages", "1", f"--crop={value}", cwd=tmp_path).code == 2
+
+
+def test_crop_on_embedded_formats_is_exit_2(cli, tmp_path):
+    result = cli("image", make_docx_with_media(tmp_path / "a.docx", image1__png=png_bytes()), "--crop", "0,0,1,1", cwd=tmp_path)
+    assert result.code == 2 and "pdf" in result.err

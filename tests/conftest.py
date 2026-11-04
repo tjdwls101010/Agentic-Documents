@@ -105,7 +105,8 @@ if args[:1] == ["export-png"]:
     pages = json.loads(os.environ["FAKE_RHWP_PAGES"])
     if page >= len(pages):
         sys.exit(1)
-    Image.new("RGB", (120 + page, 80)).save(os.path.join(out, source + ".png"))
+    scale = float(args[args.index("--scale") + 1]) if "--scale" in args else 1.0
+    Image.new("RGB", (int((120 + page) * scale), int(80 * scale))).save(os.path.join(out, source + ".png"))
     sys.exit(0)
 sys.exit(9)
 """

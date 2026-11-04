@@ -235,7 +235,7 @@ def facts_of(path: str, extracted) -> FileFacts:
 class Coverage:
     """이번 실행이 못 본 범위를 모은다."""
 
-    def __init__(self, item_limit: int = 20):
+    def __init__(self, item_limit: int = 5):
         self.item_limit = item_limit
         self.unreadable = []
         self.no_text = []
@@ -269,13 +269,16 @@ class Coverage:
         if facts.embedded_images:
             self.embedded_files.append((facts.path, facts.embedded_images))
 
-    def _capped(self, items) -> tuple:
-        return items[: self.item_limit], max(0, len(items) - self.item_limit)
+    def summary(self, *, list_items: bool = True) -> dict:
+        """list_items가 거짓이면 수만 준다. 같은 폴더를 이어 받을 때 같은 목록을 되풀이하지 않는다."""
+        limit = self.item_limit if list_items else 0
 
-    def summary(self) -> dict:
-        unreadable, unreadable_more = self._capped(sorted(self.unreadable, key=lambda item: item["path"]))
-        no_text, no_text_more = self._capped(sorted(self.no_text))
-        pages, pages_more = self._capped(sorted(self.image_only, key=lambda item: item["path"]))
+        def capped(items) -> tuple:
+            return items[:limit], max(0, len(items) - limit)
+
+        unreadable, unreadable_more = capped(sorted(self.unreadable, key=lambda item: item["path"]))
+        no_text, no_text_more = capped(sorted(self.no_text))
+        pages, pages_more = capped(sorted(self.image_only, key=lambda item: item["path"]))
         return {
             "unreadable": {"count": len(self.unreadable), "items": unreadable, "more": unreadable_more},
             "no_text": {"count": len(self.no_text), "items": no_text, "more": no_text_more},

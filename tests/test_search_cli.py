@@ -304,9 +304,10 @@ def test_coverage_reports_every_kind(cli, tmp_path):
     (tmp_path / "확장자없음").write_bytes(b"plain")
     (tmp_path / "깨진링크.pdf").symlink_to(tmp_path / "없음.pdf")
     coverage = cli("search", "정상", tmp_path).json["coverage"]
-    reasons = {os.path.basename(i["path"]): i["reason"] for i in coverage["unreadable"]["items"]}
+    all_records = cli("search", "정상", tmp_path, "--coverage-only").lines
+    reasons = {os.path.basename(i["path"]): i["reason"] for i in all_records if i["type"] == "unreadable"}
     assert reasons == {"암호.hwp": "encrypted", "배포.hwp": "distribution", "깨짐.hwpx": "corrupt", "가짜.pdf": "not_a_document", "압축.docx": "unsupported", "깨진링크.pdf": "io"}
-    assert coverage["unreadable"]["count"] == 6
+    assert coverage["unreadable"]["count"] == 6 and len(coverage["unreadable"]["items"]) == 5 and coverage["unreadable"]["more"] == 1
     assert [os.path.basename(p) for p in coverage["no_text"]["items"]] == ["빈글.hwpx"]
     assert coverage["image_only_pages"]["files"] == 1 and coverage["image_only_pages"]["pages"] == 1
     assert coverage["image_only_pages"]["items"][0]["pages"] == [2]
@@ -319,7 +320,7 @@ def test_coverage_only_is_ndjson_without_cap(cli, tmp_path):
         hwp(tmp_path / f"암호{number:02}.hwp", "x", encrypted=True)
     (tmp_path / "자료.zip").write_bytes(b"PK")
     capped = cli("search", "x", tmp_path).json["coverage"]["unreadable"]
-    assert capped["count"] == 25 and len(capped["items"]) == 20 and capped["more"] == 5
+    assert capped["count"] == 25 and len(capped["items"]) == 5 and capped["more"] == 20
     lines = cli("search", "x", tmp_path, "--coverage-only").lines
     assert sum(line["type"] == "unreadable" for line in lines) == 25
     assert [line for line in lines if line["type"] == "not_read"][0]["extension"] == "zip"
@@ -564,3 +565,35 @@ def test_exact_is_found_first_and_variants_are_counted_outside_it(cli, tmp_path,
     docx(tmp_path / "a.docx", body + " " + LONG.replace("x", "z"))
     file = cli("search", query, tmp_path).json["results"][0]["files"][0]
     assert (file["exact"], file["spacing_variants"]) == expected
+
+
+# ---------- 출력 크기: 스킬의 비용 대부분은 문맥에 쌓인 출력이다 ----------
+def test_long_paths_are_not_repeated_in_a_result(cli, tmp_path):
+    folder = tmp_path / ("긴폴더이름" * 8)
+    hwpx(folder / "보도.hwpx", "찾는말 " + LONG)
+    pdf(folder / "보도.pdf", "other " + LONG)
+    hwp(folder / "보도.hwp", "찾는말 " + LONG)
+    doc = cli("search", "찾는말", folder, cwd=tmp_path).json["results"][0]
+    assert doc["document"] == "보도"
+    assert all("path" not in snippet for snippet in doc["snippets"])
+    assert doc["snippets"][0]["kind"] in ("hwp", "hwpx")
+    assert sum(json.dumps(doc, ensure_ascii=False).count("긴폴더이름" * 8) for _ in [0]) == 3  # 파일 셋의 경로에만
+
+
+def test_coverage_lists_only_on_the_first_page(cli, tmp_path):
+    for number in range(4):
+        hwpx(tmp_path / f"{number}.hwpx", "찾는말 " + LONG)
+    hwp(tmp_path / "암호.hwp", "x", encrypted=True)
+    first = cli("search", "찾는말", tmp_path, "--limit", "2").json
+    second = cli("search", "찾는말", tmp_path, "--limit", "2", "--offset", "2").json
+    assert len(first["coverage"]["unreadable"]["items"]) == 1
+    assert second["coverage"]["unreadable"] == {"count": 1, "items": [], "more": 1}
+
+
+def test_max_chars_lets_one_call_return_everything(cli, tmp_path):
+    for number in range(30):
+        hwpx(tmp_path / f"문서{number:02}.hwpx", ("찾는말 " + "가" * 300 + " ") * 3)
+    capped = cli("search", "찾는말", tmp_path, "--limit", "30", "--context", "300", "--max-chars", "3000").json
+    assert 0 < capped["summary"]["returned"] < 30
+    everything = cli("search", "찾는말", tmp_path, "--limit", "30", "--context", "300", "--max-chars", "1000000").json
+    assert everything["summary"]["returned"] == 30 and everything["summary"]["next_offset"] is None
