@@ -8,6 +8,7 @@ import stat
 import unicodedata
 from collections import Counter
 from concurrent.futures import as_completed
+from contextlib import closing
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -54,6 +55,13 @@ class FileFacts(NamedTuple):
     no_text: bool
     image_only_pages: list
     embedded_images: int
+
+
+class DocumentResult(NamedTuple):
+    path: str
+    value: object
+    error: str | None
+    facts: FileFacts | None
 
 
 @dataclass
@@ -205,6 +213,26 @@ def run_isolated(fn, items, *, timeout: float = FILE_TIMEOUT, args=()):
         pool.join()
 
 
+def _document_worker(path: str, per_document, args):
+    extracted = extract_unit.extract(path)
+    if extracted.error:
+        return None, extracted.error, None
+    return per_document(path, extracted, *args), None, facts_of(path, extracted)
+
+
+def map_documents(per_document, paths, *, args=()):
+    """파일마다 작업자 안에서 추출한 뒤 per_document(경로, 추출 결과, *args)를 부른다.
+
+    못 읽은 파일은 error에 닫힌 사유를 담아 돌려주고 나머지는 계속한다.
+    """
+    for outcome in run_isolated(_document_worker, paths, args=(per_document, args)):
+        if outcome.failure:
+            yield DocumentResult(outcome.item, None, outcome.failure, None)
+        else:
+            value, error, facts = outcome.value
+            yield DocumentResult(outcome.item, value, error, facts)
+
+
 def facts_of(path: str, extracted) -> FileFacts:
     letters = sum(1 for _, text in extracted.parts for char in text if not char.isspace())
     return FileFacts(path, letters < NO_TEXT_BELOW, list(extracted.image_only_pages), extracted.embedded_images)
@@ -227,6 +255,14 @@ class Coverage:
         self.not_read_paths.extend(discovery.not_read_paths)
         for path in discovery.broken:
             self.add_failure(path, "io")
+
+    def add_result(self, result: DocumentResult) -> bool:
+        """읽은 파일이면 참이다."""
+        if result.error:
+            self.add_failure(result.path, result.error)
+            return False
+        self.add_facts(result.facts)
+        return True
 
     def add_failure(self, path: str, reason: str) -> None:
         self.unreadable.append({"path": path, "reason": reason})
@@ -277,10 +313,7 @@ def _escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
 
 
-def _text_worker(path: str):
-    extracted = extract_unit.extract(path)
-    if extracted.error:
-        return None, extracted.error, None
+def _text_of(path: str, extracted) -> str:
     escaped_path = _escape(path)
     lines = []
     for unit, text in extracted.parts:
@@ -290,7 +323,7 @@ def _text_worker(path: str):
         for record in records:
             if record.strip():
                 lines.append(f"{escaped_path}\t{unit_text}\t{_escape(record)}\n")
-    return "".join(lines), None, facts_of(path, extracted)
+    return "".join(lines)
 
 
 def stream_text(paths, glob, out, err) -> None:
@@ -298,16 +331,11 @@ def stream_text(paths, glob, out, err) -> None:
     discovery = discover(paths, glob)
     coverage = Coverage()
     coverage.add_discovery(discovery)
-    for outcome in run_isolated(_text_worker, [target.path for target in discovery.targets]):
-        if outcome.failure:
-            coverage.add_failure(outcome.item, outcome.failure)
-            continue
-        lines, error, facts = outcome.value
-        if error:
-            coverage.add_failure(outcome.item, error)
-            continue
-        coverage.add_facts(facts)
-        out.write(lines)
-        out.flush()
+    with closing(map_documents(_text_of, [target.path for target in discovery.targets])) as results:
+        for result in results:
+            if not coverage.add_result(result):
+                continue
+            out.write(result.value)
+            out.flush()
     err.write(json.dumps({"coverage": coverage.summary()}, ensure_ascii=False) + "\n")
     err.flush()
