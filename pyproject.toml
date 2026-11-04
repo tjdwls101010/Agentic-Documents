@@ -1,0 +1,28 @@
+[project]
+name = "docs-find"
+version = "0.1.0"
+description = "documents 스킬의 시험과 코퍼스 점검용 환경. 스킬 실행에는 쓰이지 않는다(스킬은 cli.py의 PEP 723 머리를 쓴다)."
+requires-python = ">=3.11"
+dependencies = [
+    "olefile==0.47",
+    "openpyxl==3.1.5",
+    "pebble==5.2.3",
+    "pillow==13.0.0",
+    "pypdfium2==5.14.0",
+]
+
+[dependency-groups]
+test = [
+    "pytest",
+    "python-docx",
+    "python-pptx",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".claude/skills/documents/scripts", "."]
+addopts = "-m 'not slow'"
+markers = ["slow: 진짜 rhwp·kordoc을 부르거나 실제 코퍼스 표본을 읽는 시험"]
