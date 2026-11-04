@@ -1,4 +1,9 @@
+.claude/*
+!.claude/skills/
+__pycache__/
+.venv/
+.pytest_cache/
+.documents/
 .DS_Store
-.claude/
 .tmp/
 docs/
