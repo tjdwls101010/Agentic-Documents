@@ -39,6 +39,11 @@ _KORDOC_CODES_TO_REASON = {
     "OUTPUT_TOO_LARGE": "too_large",
     "FILE_NOT_FOUND": "io",
 }
+# kordoc의 문구는 자기 CLI 옵션을 말한다. 이 도구에서 실행할 수 있는 길로 바꾼다.
+_KORDOC_MESSAGES = {
+    "NEEDS_OCR": "글자층이 없다. `image`로 보거나 `--ocr --pages`로 읽는다",
+    "SKIPPED_IMAGE": "그림 영역의 내용이 글자로 나오지 않았다. `image`로 본다",
+}
 _DOCTOR_HINT = "`doctor --fix`로 설치하거나 상태를 확인한다"
 _REASON_TEXT = {
     "encrypted": "암호가 걸려 있다",
@@ -131,18 +136,21 @@ def _heuristic_warnings(markdown_by_page: dict, images_by_page: dict, multi_colu
     return warnings
 
 
-def _kordoc_warnings(raw: list) -> list:
+def _kordoc_warnings(raw: list, pages_read=()) -> list:
     merged = {}
     for item in raw:
         code = item.get("code") or "KORDOC"
         if code in _KORDOC_DROPPED_WARNINGS:
             continue
-        entry = merged.setdefault(code, _warning(code, [], item.get("message", "")))
+        entry = merged.setdefault(code, _warning(code, [], _KORDOC_MESSAGES.get(code, item.get("message", ""))))
         page = item.get("page")
         if isinstance(page, int) and page not in entry["pages"]:
             entry["pages"].append(page)
     for entry in merged.values():
         entry["pages"].sort()
+    # 문서 전체에 대한 OCR 경고는 쪽을 달지 않는다. 읽은 쪽 전체에 대한 말이다.
+    if "NEEDS_OCR" in merged and not merged["NEEDS_OCR"]["pages"]:
+        merged["NEEDS_OCR"]["pages"] = sorted(pages_read)
     return list(merged.values())
 
 
@@ -236,7 +244,7 @@ def _read_pdf(path: str, pages, no_tables: bool, ocr: bool) -> _Assembled:
     images = {page: {"images": layout.images, "image_area": layout.image_area} for page, layout in layouts.items() if layout.images}
     multi_column = [page for page, layout in layouts.items() if layout.multi_column]
     warnings = _heuristic_warnings(raw_markdown, images, multi_column)
-    warnings += _kordoc_warnings(parsed.warnings)
+    warnings += _kordoc_warnings(parsed.warnings, raw_markdown)
     return _Assembled("pdf", count, "physical", text, spans, images, warnings, {})
 
 
@@ -315,7 +323,7 @@ def _read_pptx(path: str, pages) -> _Assembled:
     raw = dict(parsed.pages)
     text, spans = _join_pages({page: clean_markdown(value) for page, value in raw.items()})
     images = _image_counts(raw)
-    warnings = _heuristic_warnings(raw, images) + _kordoc_warnings(parsed.warnings)
+    warnings = _heuristic_warnings(raw, images) + _kordoc_warnings(parsed.warnings, raw)
     return _Assembled("pptx", count, "slide", text, spans, images, warnings, {})
 
 

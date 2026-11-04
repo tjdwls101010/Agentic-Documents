@@ -170,15 +170,55 @@ def test_out_dir_is_used_and_old_files_are_kept(cli, tmp_path):
     assert not (work / ".documents").exists() and not (out / ".gitignore").exists()
 
 
-def test_default_folder_drops_day_old_pictures_only(cli, tmp_path):
+def test_default_folder_drops_only_its_own_day_old_pictures(cli, tmp_path):
     folder = tmp_path / ".documents/pages"
     folder.mkdir(parents=True)
-    (old_file := folder / "옛그림.png").write_bytes(b"x")
-    (recent := folder / "새그림.png").write_bytes(b"x")
     old = time.time() - 2 * 86400
-    os.utime(old_file, (old, old))
-    cli("image", pdf(tmp_path / "a.pdf", "one " + LONG), "--pages", "1", cwd=tmp_path)
-    assert not old_file.exists() and recent.exists()
+    (old_picture := folder / "0123456789ab_p0001.png").write_bytes(b"x")
+    (recent := folder / "0123456789ac_p0001.png").write_bytes(b"x")
+    (note := folder / "메모.txt").write_bytes(b"x")
+    (other := folder / "내그림.png").write_bytes(b"x")
+    for path in (old_picture, note, other):
+        os.utime(path, (old, old))
+    assert cli("image", pdf(tmp_path / "a.pdf", "one " + LONG), "--pages", "1", cwd=tmp_path).code == 0
+    assert not old_picture.exists()
+    assert recent.exists() and note.exists() and other.exists()
+
+
+@pytest.mark.parametrize("linked", [".documents", ".documents/pages"])
+def test_symlinked_default_folder_is_refused_and_nothing_is_deleted(cli, tmp_path, linked):
+    # 작업 폴더 밖 파일을 지우거나 쓰면 안 된다(독립 검토 재현).
+    outside = tmp_path / "바깥"
+    (outside / "pages").mkdir(parents=True)
+    old = time.time() - 2 * 86400
+    valuable = outside / "0123456789ab_p0001.png"
+    valuable.write_bytes(b"x")
+    os.utime(valuable, (old, old))
+    work = tmp_path / "작업"
+    (work / ".documents").mkdir(parents=True)
+    link = work / linked
+    if linked == ".documents":
+        (work / ".documents").rmdir()
+        target = outside
+    else:
+        target = outside
+    link.symlink_to(target, target_is_directory=True)
+    result = cli("image", pdf(tmp_path / "a.pdf", "one " + LONG), "--pages", "1", cwd=work)
+    assert result.code == 3 and "--out-dir" in result.json["error"]["message"]
+    assert valuable.exists()
+    assert [p.name for p in outside.iterdir() if p.is_file()] == [valuable.name]
+
+
+def test_symlink_in_the_folder_is_not_written_through(cli, tmp_path):
+    path = pdf(tmp_path / "a.pdf", "one " + LONG)
+    first = cli("image", path, "--pages", "1", cwd=tmp_path).json["images"][0]["path"]
+    os.unlink(first)
+    victim = tmp_path / "남의파일.txt"
+    victim.write_text("지키기")
+    os.symlink(victim, first)
+    assert cli("image", path, "--pages", "1", cwd=tmp_path).code == 0
+    assert victim.read_text() == "지키기"
+    assert not os.path.islink(first)
 
 
 def test_existing_gitignore_is_left_alone(cli, tmp_path):

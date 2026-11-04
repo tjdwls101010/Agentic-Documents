@@ -111,6 +111,14 @@ def test_real_timeout_is_not_hit_by_ordinary_read():
     assert real("read", FIXTURES / "two_pages_real.pdf", "--pages", "1", timeout=60).returncode == 0
 
 
+def test_real_image_only_pdf_warning_can_be_followed(tmp_path):
+    path = tmp_path / "그림뿐.pdf"
+    Image.new("RGB", (400, 400), "white").save(path, "PDF")
+    head, _ = split(real("read", path))
+    warning = next(w for w in head["warnings"] if w["code"] == "NEEDS_OCR")
+    assert warning["pages"] == [1] and "--ocr --pages" in warning["message"] and "image" in warning["message"]
+
+
 def test_real_kordoc_read_of_encrypted_is_exit_3():
     completed = real("read", FIXTURES / "encrypted.pdf")
     assert completed.returncode == 3 and json.loads(completed.stdout)["error"]["code"] == "encrypted"

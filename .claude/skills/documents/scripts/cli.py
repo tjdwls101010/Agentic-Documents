@@ -25,6 +25,7 @@ EXIT_USAGE = 2
 EXIT_UNREADABLE = 3
 EXIT_TOOL = 4
 EXIT_INTERRUPTED = 130
+_PAGE_NUMBER_LIMIT = 1_000_000
 
 _ARGPARSE_KOREAN = {
     "usage: ": "사용법: ",
@@ -62,7 +63,7 @@ def _positive(text):
 
 def _page_range(text):
     """`3`, `1-5`, `1,3,5-7`을 쪽 번호 목록으로 푼다. 쪽은 1부터다."""
-    pages = []
+    pages = set()
     for piece in text.split(","):
         first, dash, last = piece.partition("-")
         if not first.isdigit() or (dash and not last.isdigit()):
@@ -70,7 +71,9 @@ def _page_range(text):
         start, stop = int(first), int(last) if dash else int(first)
         if start < 1 or stop < start:
             raise argparse.ArgumentTypeError(f"쪽은 1부터이고 범위는 오름차순이다: {text}")
-        pages.extend(number for number in range(start, stop + 1) if number not in pages)
+        if stop > _PAGE_NUMBER_LIMIT:
+            raise argparse.ArgumentTypeError(f"쪽 번호가 너무 크다: {text}")
+        pages.update(range(start, stop + 1))
     return sorted(pages)
 
 

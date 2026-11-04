@@ -18,11 +18,16 @@ _NAME_BYTES_LIMIT = 180
 _KEPT_FORMATS = {"PNG": ".png", "JPEG": ".jpg", "GIF": ".gif", "WEBP": ".webp"}
 _DOCTOR_HINT = "`doctor --fix`로 설치하거나 상태를 확인한다"
 _BAD_NAME = re.compile(r'[/\\\x00-\x1f]')
+# 이 스킬이 만든 그림의 이름. 기본 폴더에서도 이것만 지운다.
+_OWN_PICTURE = re.compile(r"[0-9a-f]{12}_.+\.(?:png|jpg|gif|webp)")
 
 
 def _prepare_default_folder() -> Path:
     base = Path.cwd() / ".documents"
     folder = base / "pages"
+    if base.is_symlink() or folder.is_symlink():
+        # 링크를 따라가면 작업 폴더 밖에 쓰고 밖의 파일을 지우게 된다.
+        raise Unreadable("io", "작업 폴더의 .documents가 심링크라 쓰지 않는다. `--out-dir`로 쓸 곳을 준다")
     try:
         folder.mkdir(parents=True, exist_ok=True)
     except OSError as error:
@@ -44,7 +49,7 @@ def _drop_old_pictures(folder: Path) -> None:
         return
     for entry in entries:
         try:
-            if entry.is_file(follow_symlinks=False) and entry.stat(follow_symlinks=False).st_mtime < limit:
+            if _OWN_PICTURE.fullmatch(entry.name) and entry.is_file(follow_symlinks=False) and entry.stat(follow_symlinks=False).st_mtime < limit:
                 os.unlink(entry.path)
         except OSError:
             continue
@@ -53,6 +58,14 @@ def _drop_old_pictures(folder: Path) -> None:
 def _prefix(path: str) -> str:
     status = os.stat(path)
     return hashlib.sha256(f"{os.path.abspath(path)}\0{status.st_mtime_ns}".encode("utf-8", "surrogateescape")).hexdigest()[:12]
+
+
+def _already_made(target: Path) -> bool:
+    """같은 파일의 같은 쪽을 이미 그렸는가. 그 자리의 심링크는 따라 쓰지 않게 치운다."""
+    if target.is_symlink():
+        target.unlink()
+        return False
+    return target.exists() and target.stat().st_size > 0
 
 
 def _size_of(path: Path) -> tuple:
@@ -77,7 +90,7 @@ def _render_pdf(path: str, pages, folder_of, prefix: str) -> dict:
         images = []
         for page in pages:
             target = folder / f"{prefix}_p{page:04}.png"
-            if target.exists() and target.stat().st_size:
+            if _already_made(target):
                 width, height = _size_of(target)
             else:
                 width, height = pdf.render_page(path, page, target)
@@ -104,7 +117,7 @@ def _render_hancom(path: str, kind: str, pages, folder_of, prefix: str) -> dict:
         images = []
         for page in pages:
             target = folder / f"{prefix}_p{page:04}.png"
-            if not (target.exists() and target.stat().st_size):
+            if not _already_made(target):
                 rhwp.render_page(path, binary, page, target)
             width, height = _size_of(target)
             images.append({"page": page, "path": str(target.resolve()), "width": width, "height": height, "source_name": None})
@@ -145,6 +158,7 @@ def _write_member(path: str, member: str, page, folder: Path, prefix: str, used:
                     candidate = f"{stem}_{counter}{suffix}"
                 used.add(candidate)
                 target = folder / candidate
+                _already_made(target)
                 if image_format in _KEPT_FORMATS:
                     target.write_bytes(data)
                 else:

@@ -188,7 +188,7 @@ def test_many_column_page_is_not_multi_column(cli, tmp_path, node_path, fake_kor
     lines = []
     for row in range(14):
         y = 650 - row * 20
-        lines.append(b"BT /F1 11 Tf 40 %d Td (a long first column text %d) Tj ET" % (y, row))
+        lines.append(b"BT /F1 11 Tf 40 %d Td (a long first column text value here %d) Tj ET" % (y, row))
         for x in (300, 400, 480):
             lines.append(b"BT /F1 11 Tf %d %d Td (cell %d) Tj ET" % (x, y, row))
     path = b.write_pdf_stream(tmp_path / "표.pdf", b" ".join(lines))
@@ -214,6 +214,34 @@ def test_kordoc_warnings_are_moved_and_hidden_filter_is_dropped(cli, tmp_path, n
     codes = {w["code"]: w for w in head["warnings"]}
     assert set(codes) == {"SKIPPED_IMAGE", "NEEDS_OCR"}
     assert codes["SKIPPED_IMAGE"]["pages"] == [1, 2]
+
+
+def test_kordoc_ocr_messages_only_suggest_what_can_run(cli, tmp_path, node_path, fake_kordoc):
+    # 진짜 kordoc의 문구는 `--ocr`만 말하는데 그렇게 부르면 종료 코드 2다(독립 검토 재현).
+    warnings = [
+        {"code": "NEEDS_OCR", "message": "이미지 기반 PDF — ocr: true (CLI --ocr) 로 다시 파싱하면 읽습니다"},
+        {"code": "SKIPPED_IMAGE", "message": "그림 속 글은 ocr: true / CLI --ocr 로 읽습니다", "page": 2},
+    ]
+    env = {"FAKE_KORDOC_RESULT": kordoc_result(pages=[(1, ""), (2, "글")], warnings=warnings)}
+    head = split(cli("read", pdf(tmp_path / "a.pdf", "a " + LONG, "b " + LONG), path_prefix=node_path, env=env))[0]
+    codes = {w["code"]: w for w in head["warnings"]}
+    assert codes["NEEDS_OCR"]["pages"] == [1, 2]  # 쪽 없는 경고는 읽은 쪽 전체를 말한다
+    for warning in codes.values():
+        assert "image" in warning["message"]
+        assert "CLI --ocr" not in warning["message"] and "ocr: true" not in warning["message"]
+    assert "--ocr --pages" in codes["NEEDS_OCR"]["message"]
+
+
+@pytest.mark.parametrize("command", ["read", "image"])
+def test_wide_page_range_is_refused_quickly(cli, tmp_path, command):
+    path = pdf(tmp_path / "a.pdf", "a " + LONG, "b " + LONG)
+    started = time.monotonic()
+    env = {}
+    result = cli(command, path, "--pages", "1-100000", cwd=tmp_path, timeout=20)
+    assert result.code in (2, 4)
+    assert time.monotonic() - started < 10
+    huge = cli(command, path, "--pages", "1-99999999999", cwd=tmp_path, timeout=20)
+    assert huge.code == 2
 
 
 def test_pages_out_of_range_says_the_count(cli, tmp_path, node_path, fake_kordoc):
