@@ -5,8 +5,27 @@ from dataclasses import dataclass, field
 
 from . import hancom, ooxml, pdf
 
+DOCUMENT_EXTENSIONS = frozenset({"hwp", "hwpx", "hwtx", "hwpt", "pdf", "docx", "docm", "pptx", "pptm", "xlsx", "xlsm"})
+
 _DOCUMENT_ERRORS = (hancom.DocumentError, pdf.DocumentError, ooxml.DocumentError)
 _CFB_MAGIC = bytes.fromhex("D0CF11E0A1B11AE1")
+
+
+class UsageProblem(Exception):
+    """종료 코드 2: 인자가 틀렸다."""
+
+
+class Unreadable(Exception):
+    """종료 코드 3: 대상 파일을 못 읽는다. code는 닫힌 사유다."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class ToolUnavailable(Exception):
+    """종료 코드 4: 필요한 도구가 없거나 실패했다."""
 
 
 @dataclass
@@ -27,6 +46,38 @@ class Extracted:
 def looks_like_document(head: bytes) -> bool:
     """확장자를 모르는 파일을 열어 볼 값이 있는지 머리 바이트로 본다."""
     return head.startswith((b"PK\x03\x04", _CFB_MAGIC)) or b"%PDF-" in head[:1024]
+
+
+def has_document_extension(path) -> bool:
+    return os.path.splitext(os.fspath(path))[1][1:].lower() in DOCUMENT_EXTENSIONS
+
+
+def sniff(path) -> str | None:
+    """내용으로 형식 이름을 준다. hwp, hwpx, pdf, docx, pptx, xlsx, 또는 kordoc에게만 맡길 hwp3, hml, xls. 어느 것도 아니면 None이다."""
+    path = os.fspath(path)
+    with open(path, "rb") as stream:
+        head = stream.read(1024)
+    if head.startswith(b"PK"):
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names = set(archive.namelist())
+        except zipfile.BadZipFile:
+            return None
+        if hancom.is_hwpx(names):
+            return "hwpx"
+        for marker, kind in (("word/document.xml", "docx"), ("ppt/presentation.xml", "pptx"), ("xl/workbook.xml", "xlsx")):
+            if marker in names:
+                return kind
+        return None
+    if head.startswith(_CFB_MAGIC):
+        return hancom.cfb_kind(path)
+    if b"%PDF-" in head:
+        return "pdf"
+    if hancom.is_hwp3(head):
+        return "hwp3"
+    if os.path.splitext(path)[1].lower() == ".hml":
+        return "hml"
+    return None
 
 
 def _whole_file(kind: str, text) -> Extracted:

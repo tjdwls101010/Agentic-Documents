@@ -267,6 +267,73 @@ CASES = [
 ]
 
 
+def read_header(path, *extra):
+    completed = cli("read", path, "--max-chars", "1", *extra)
+    if completed.returncode != 0:
+        return None
+    return json.loads(completed.stdout.partition("\n")[0])
+
+
+def warning_rates(root, sample):
+    """표본 PDF 전체를 읽어 경고가 얼마나 자주 울리는지 잰다."""
+    paths = sorted(os.path.join(folder, name) for folder, _, names in os.walk(root) for name in names if name.lower().endswith(".pdf"))
+    random.Random(SEED).shuffle(paths)
+    chosen = paths[:sample]
+    headers = parallel(read_header, chosen)
+    counts = Counter()
+    pages = 0
+    examples = defaultdict(list)
+    for path, header in zip(chosen, headers):
+        if header is None:
+            counts["read_failed"] += 1
+            continue
+        pages += header["page_count"] or 0
+        for warning in header["warnings"]:
+            counts[warning["code"]] += len(warning["pages"]) or 1
+            examples[warning["code"]].extend((path, page) for page in warning["pages"])
+    picker = random.Random(SEED)
+    drawn = {code: [{"path": path, "page": page} for path, page in picker.sample(items, min(6, len(items)))] for code, items in examples.items() if code in ("empty_cells_with_images", "layout_suspect")}
+    return {"pdfs": len(chosen), "pages": pages, "warning_pages": dict(counts), "examples": drawn}
+
+
+def find_file(root, *parts):
+    for folder, _, names in os.walk(root):
+        for name in names:
+            normal = unicodedata.normalize("NFC", os.path.join(folder, name))
+            if all(part in normal for part in parts):
+                return os.path.join(folder, name)
+    return None
+
+
+def _body(path, *extra):
+    completed = cli("read", path, *extra)
+    return completed.stdout.partition("\n")[2] if completed.returncode == 0 else ""
+
+
+# 대체 품질 문항의 도구 수준 길. 정답은 내장 Read로 확인했다(모델 수준은 평가에서 묻는다).
+QUALITY = [
+    ("바디워시 17쪽 헹굼 정도", ("251014_바디워시", ".pdf"), 17, "empty_cells_with_images", None),
+    ("자사우대 35쪽 그룹 3", ("260628_플랫폼", "붙임_", ".pdf"), 35, "empty_cells_with_images", None),
+    ("국민성장펀드 7쪽 인피니언의 나라", ("260211_본격", "별첨2", ".pdf"), 7, "empty_cells_with_images", None),
+    ("사례집 27쪽 연락처 오기재", ("260526_2025년", "2025 개인정보 분쟁조정 사례집.pdf"), 27, "layout_suspect", "보기 어렵다"),
+    ("가습기 20쪽 세척 표의 절", ("251030_가습기", ".pdf"), 20, "layout_suspect", "제품 세척 시 주의사항"),
+]
+
+
+def quality_questions(root):
+    report = []
+    for label, parts, page, code, answer in QUALITY:
+        path = find_file(root, *parts)
+        header = read_header(path, "--pages", str(page)) if path else None
+        warned = bool(header and any(w["code"] == code and page in w["pages"] for w in header["warnings"]))
+        answered = None
+        if answer is not None:
+            answered = answer in _body(path, "--pages", str(page), "--no-tables")
+        pictured = cli("image", path, "--pages", str(page)).returncode == 0 if path else False
+        report.append({"question": label, "warned": warned, "text_answer_with_no_tables": answered, "image_ok": pictured, "passed": warned and pictured and answered is not False})
+    return report
+
+
 def spacing_cases(root):
     report = {}
     for query, expected in (("가상자산 이용자 보호", (10, 24)), ("주민등록번호 처리제한", (4, 10))):
@@ -288,6 +355,7 @@ def main():
     parser.add_argument("root", help="코퍼스 폴더")
     parser.add_argument("--vault", help="kordoc md가 있는 폴더")
     parser.add_argument("--sample", type=int, default=600, help="rhwp를 부르는 표본 수")
+    parser.add_argument("--warning-sample", type=int, default=400, help="경고 빈도를 잴 PDF 표본 수")
     args = parser.parse_args()
     report = {}
     started = time.monotonic()
@@ -312,8 +380,10 @@ def main():
         report["page_accuracy"] = page_accuracy(documents, args.sample)
     if args.vault:
         report["vault_recall"] = vault_recall(documents, args.vault)
+    report["quality_questions"] = quality_questions(args.root)
+    report["warning_rates"] = warning_rates(args.root, args.warning_sample)
     print(json.dumps(report, ensure_ascii=False, indent=1))
-    failed = not report["pdf_word_recall"]["passed"] or not all(case["passed"] for case in report["cases"])
+    failed = not report["pdf_word_recall"]["passed"] or not all(case["passed"] for case in report["cases"]) or not all(item["passed"] for item in report["quality_questions"])
     return 1 if failed else 0
 
 

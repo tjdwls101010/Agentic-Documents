@@ -270,6 +270,43 @@ def pptx_slides(path) -> Slides:
         raise DocumentError("corrupt") from error
 
 
+_MEDIA_PREFIX = {"docx": "word/media/", "xlsx": "xl/media/", "pptx": "ppt/media/"}
+
+
+def media_names(path, kind: str) -> list:
+    """docx·xlsx의 내장 그림 항목 이름을 준다."""
+    try:
+        with _open_archive(path) as archive:
+            prefix = _MEDIA_PREFIX[kind]
+            return sorted(name for name in archive.namelist() if name.startswith(prefix) and not name.endswith("/"))
+    except _FORMAT_ERRORS as error:
+        raise DocumentError("corrupt") from error
+
+
+def slide_media(path) -> list:
+    """표시 순서대로 슬라이드마다 그 슬라이드가 관계로 가리키는 그림 항목 이름을 준다."""
+    try:
+        with _open_archive(path) as archive:
+            slides = []
+            for slide in _slide_order(archive):
+                targets = [target for kind, target in _relationships(archive, slide).values() if kind == "image" and target in archive.NameToInfo]
+                slides.append(list(dict.fromkeys(targets)))
+            return slides
+    except _FORMAT_ERRORS as error:
+        raise DocumentError("corrupt") from error
+
+
+def read_member(path, name: str, limit: int) -> bytes | None:
+    """zip 항목을 읽는다. 선언 크기가 limit을 넘으면 None이다."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if archive.getinfo(name).file_size > limit:
+                return None
+            return archive.read(name)
+    except _FORMAT_ERRORS as error:
+        raise DocumentError("corrupt") from error
+
+
 _PERCENT = re.compile(r"%\s*(?:_.)?\s*$")
 _DECIMALS = re.compile(r"\.(0+)")
 
