@@ -242,9 +242,7 @@ def _slide_order(archive) -> list:
 
     def start(element, attrs):
         if element.rpartition(" ")[2] == "sldId":
-            for key in _RELATIONSHIP_ID:
-                if key in attrs:
-                    ids.append(attrs[key])
+            ids.append(next((attrs[key] for key in _RELATIONSHIP_ID if key in attrs), None))
 
     with archive.open("ppt/presentation.xml") as stream:
         _parser(start).ParseFile(stream)

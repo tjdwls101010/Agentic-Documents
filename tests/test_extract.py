@@ -456,3 +456,17 @@ def test_pptx_with_a_dangling_slide_id_is_corrupt(tmp_path):
 
     b.rewrite_zip(path, drop_relationship)
     assert extract.extract(path).error == "corrupt"
+
+
+def test_pptx_slide_id_without_relationship_attribute_is_corrupt(tmp_path):
+    path = make_pptx(tmp_path / "a.pptx", ["찾을 말"])
+
+    def drop_attribute(name, data):
+        if name == "ppt/presentation.xml":
+            import re
+
+            return re.sub(rb'(<p:sldId [^>]*?)\s*r:id="[^"]*"', rb"\1", data)
+        return data
+
+    b.rewrite_zip(path, drop_attribute)
+    assert extract.extract(path).error == "corrupt"

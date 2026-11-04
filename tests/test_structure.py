@@ -30,12 +30,12 @@ def unit_of(path: Path) -> str:
     return path.relative_to(PACKAGE).parts[0].removesuffix(".py")
 
 
-def _module_exists(parts) -> bool:
-    target = PACKAGE.joinpath(*parts)
+def _module_exists(package: Path, parts) -> bool:
+    target = package.joinpath(*parts)
     return target.is_dir() or target.with_suffix(".py").exists()
 
 
-def imports_in(source: str, package_parts=()):
+def imports_in(source: str, package_parts=(), package: Path = PACKAGE):
     """소스의 모든 import를 패키지 안 경로로 돌려준다. 함수 안 import도, `from x import 하위모듈`의 이름도 본다."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
@@ -50,7 +50,7 @@ def imports_in(source: str, package_parts=()):
                 continue
             inner = tuple(parts[1:])
             for alias in node.names:
-                if inner and not _module_exists((*inner, alias.name)):
+                if inner and not _module_exists(package, (*inner, alias.name)):
                     yield inner  # 유닛에서 이름을 가져온다
                 else:
                     yield (*inner, alias.name)
@@ -129,14 +129,13 @@ def test_cli_has_no_heavy_import_at_module_level():
 
 
 def test_the_checker_sees_every_import_form(tmp_path):
-    # 하위 모듈이 생겼을 때를 대비한 검사기의 시험이다. 지금 없는 경로라도 모양을 판별해야 한다.
-    inner = PACKAGE / "hancom" / "_structure_probe.py"
-    inner.write_text("", encoding="utf-8")
-    try:
-        assert list(imports_in("from documents.hancom import _structure_probe")) == [("hancom", "_structure_probe")]
-        assert list(imports_in("from documents.hancom._structure_probe import x")) == [("hancom", "_structure_probe")]
-        assert list(imports_in("import documents.hancom._structure_probe")) == [("hancom", "_structure_probe")]
-        assert list(imports_in("from documents import hancom")) == [("hancom",)]
-        assert list(imports_in("from documents.hancom import hwp_text")) == [("hancom",)]
-    finally:
-        inner.unlink()
+    # 하위 모듈이 생겼을 때를 대비한 검사기의 시험이다. 가짜 패키지에 비추어 모양을 판별한다.
+    package = tmp_path / "documents"
+    (package / "hancom").mkdir(parents=True)
+    (package / "hancom" / "probe.py").write_text("", encoding="utf-8")
+    seen = lambda source: list(imports_in(source, package=package))  # noqa: E731
+    assert seen("from documents.hancom import probe") == [("hancom", "probe")]
+    assert seen("from documents.hancom.probe import x") == [("hancom", "probe")]
+    assert seen("import documents.hancom.probe") == [("hancom", "probe")]
+    assert seen("from documents import hancom") == [("hancom",)]
+    assert seen("from documents.hancom import hwp_text") == [("hancom",)]
