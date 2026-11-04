@@ -9,6 +9,7 @@ _NOT_COMPAT_JAMO = re.compile(r"[^ㄱ-ㆎ]+")
 # 문단 구조 형식에서 줄바꿈은 문단 경계이므로 공백 묶음이 넘지 않는다. PDF의 줄바꿈은 조판일 뿐이므로 넘는다.
 _INLINE_SPACE = r"[^\S\n]"
 _ANY_SPACE = r"\s"
+_SPACES = re.compile(r"\s+")
 
 
 class Patterns(NamedTuple):
@@ -39,6 +40,12 @@ def patterns(query: str, *, line_wrapped: bool) -> Patterns:
     exact = (space + "+").join(re.escape(word) for word in words)
     loose = (space + "*").join(re.escape(letter) for letter in "".join(words))
     return Patterns(re.compile(exact), re.compile(loose))
+
+
+def document_stem(name: str) -> str:
+    """같은 이름 파일을 알아보는 줄기다. NFC, 공백 접기, 끝 점·공백 제거, 확장자 제외."""
+    stem = name.rsplit(".", 1)[0] if "." in name.lstrip(".") else name
+    return _SPACES.sub(" ", unicodedata.normalize("NFC", stem)).rstrip(". ")
 
 
 def regex(query: str) -> re.Pattern:

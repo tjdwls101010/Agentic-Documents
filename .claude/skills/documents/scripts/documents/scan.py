@@ -3,7 +3,6 @@ import fnmatch
 import json
 import multiprocessing
 import os
-import re
 import stat
 import unicodedata
 from collections import Counter
@@ -15,7 +14,6 @@ from typing import NamedTuple
 from . import extract as extract_unit
 from . import normalize
 
-DOCUMENT_EXTENSIONS = frozenset({"hwp", "hwpx", "hwtx", "hwpt", "pdf", "docx", "docm", "pptx", "pptm", "xlsx", "xlsm"})
 # 열지 않고 not_read로 보고한다. 구형 Office(doc·ppt·xls)는 도구가 없고 나머지는 rg와 Read가 맡는다.
 NOT_TARGET_EXTENSIONS = frozenset(
     "zip 7z rar tar gz bz2 xz egg alz doc dot ppt pps pot xls xlt rtf odt ods odp "
@@ -30,8 +28,6 @@ FILE_TIMEOUT = 60.0
 MAX_WORKERS = 8
 # 공백을 뺀 글자가 이보다 적으면 읽었어도 글이 없는 파일로 보고한다.
 NO_TEXT_BELOW = 50
-
-_SPACES = re.compile(r"\s+")
 
 
 class MissingPath(Exception):
@@ -84,7 +80,7 @@ def _matches_glob(relative: str, glob: str | None) -> bool:
 
 
 def _is_target(path: str, extension: str) -> bool:
-    if extension in DOCUMENT_EXTENSIONS:
+    if extension in extract_unit.DOCUMENT_EXTENSIONS:
         return True
     if extension in NOT_TARGET_EXTENSIONS:
         return False
@@ -169,9 +165,7 @@ def discover(paths, glob: str | None = None) -> Discovery:
 def document_key(path: str) -> tuple:
     """같은 폴더에서 줄기가 같은 파일을 한 문서로 묶는 키다. 표시만 묶고 검색 범위는 바꾸지 않는다."""
     folder, name = os.path.split(path)
-    stem = os.path.splitext(name)[0] if _extension(name) else name
-    stem = _SPACES.sub(" ", unicodedata.normalize("NFC", stem)).rstrip(". ")
-    return unicodedata.normalize("NFC", folder), stem
+    return unicodedata.normalize("NFC", folder), normalize.document_stem(name)
 
 
 def run_isolated(fn, items, *, timeout: float = FILE_TIMEOUT, args=()):

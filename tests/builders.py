@@ -281,3 +281,39 @@ def write_pdf_stream(path: Path, stream: bytes) -> Path:
     out += b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
     path.write_bytes(bytes(out))
     return path
+
+
+def write_pdf_with_image(path: Path, text: str = "text beside the image", image_size=(200, 200)) -> Path:
+    """글과 그림 객체가 함께 있는 한 쪽 PDF."""
+    width, height = image_size
+    content = b"q %d 0 0 %d 50 400 cm /Im1 Do Q BT /F1 12 Tf 50 700 Td (%s) Tj ET" % (width, height, text.encode("ascii"))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 6 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+        b"<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\nstream\n\x00\xff\xff\x00\nendstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    path.write_bytes(bytes(out))
+    return path
+
+
+def write_two_column_pdf(path: Path) -> Path:
+    """좌우 단에 줄이 나뉜 한 쪽 PDF."""
+    lines = []
+    for row in range(12):
+        y = 650 - row * 20
+        lines.append(b"BT /F1 11 Tf 40 %d Td (left column line of plain text %d) Tj ET" % (y, row))
+        lines.append(b"BT /F1 11 Tf 330 %d Td (right column line of plain text %d) Tj ET" % (y, row))
+    return write_pdf_stream(path, b" ".join(lines))

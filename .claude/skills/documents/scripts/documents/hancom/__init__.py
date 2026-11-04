@@ -235,6 +235,23 @@ def hwp_text(path) -> Text:
         ole.close()
 
 
+def cfb_kind(path) -> str | None:
+    """CFB 파일이 HWP(`hwp`)인지 구형 엑셀(`xls`)인지 본다. 그 밖과 손상은 None이다."""
+    try:
+        ole = olefile.OleFileIO(str(path))
+    except olefile.OleFileError:
+        return None
+    try:
+        entries = ole.listdir()
+    finally:
+        ole.close()
+    if ["FileHeader"] in entries:
+        return "hwp"
+    if ["Workbook"] in entries or ["Book"] in entries:
+        return "xls"
+    return None
+
+
 def is_hwp3(head: bytes) -> bool:
     """HWP 3.x 바이너리는 CFB가 아니고 머리가 글자로 시작한다."""
     return head.startswith(_HWP3_HEAD)
