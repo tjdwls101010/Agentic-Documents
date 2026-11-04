@@ -30,29 +30,34 @@ def unit_of(path: Path) -> str:
     return path.relative_to(PACKAGE).parts[0].removesuffix(".py")
 
 
-def imports_of(path: Path):
-    """파일의 모든 import를 (패키지 안의 유닛, 그 뒤 경로)로 돌려준다. 함수 안 import도 본다."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    package_parts = path.relative_to(SCRIPTS).parts[:-1]
-    for node in ast.walk(tree):
+def _module_exists(parts) -> bool:
+    target = PACKAGE.joinpath(*parts)
+    return target.is_dir() or target.with_suffix(".py").exists()
+
+
+def imports_in(source: str, package_parts=()):
+    """소스의 모든 import를 패키지 안 경로로 돌려준다. 함수 안 import도, `from x import 하위모듈`의 이름도 본다."""
+    for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 parts = alias.name.split(".")
                 if parts[0] == "documents":
                     yield tuple(parts[1:])
         elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                base = list(package_parts)[: len(package_parts) - node.level + 1]
-            else:
-                base = []
+            base = list(package_parts)[: len(package_parts) - node.level + 1] if node.level else []
             parts = base + (node.module.split(".") if node.module else [])
             if not parts or parts[0] != "documents":
                 continue
-            if len(parts) == 1:
-                for alias in node.names:
-                    yield (alias.name,)
-            else:
-                yield tuple(parts[1:])
+            inner = tuple(parts[1:])
+            for alias in node.names:
+                if inner and not _module_exists((*inner, alias.name)):
+                    yield inner  # 유닛에서 이름을 가져온다
+                else:
+                    yield (*inner, alias.name)
+
+
+def imports_of(path: Path):
+    return imports_in(path.read_text(encoding="utf-8"), path.relative_to(SCRIPTS).parts[:-1])
 
 
 def python_files():
@@ -92,20 +97,8 @@ def test_nothing_reaches_past_a_unit_interface():
             if target and target[0] != unit:
                 assert len(target) == 1, f"{path}: {target}"
     for path in Path(__file__).parent.rglob("*.py"):
-        for target in imports_of_test(path):
+        for target in imports_in(path.read_text(encoding="utf-8")):
             assert len(target) <= 1, f"{path}: documents.{'.'.join(target)}"
-
-
-def imports_of_test(path: Path):
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                parts = alias.name.split(".")
-                if parts[0] == "documents":
-                    yield tuple(parts[1:])
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] == "documents":
-            yield tuple(node.module.split(".")[1:])
 
 
 def test_nothing_edits_sys_path():
@@ -133,3 +126,17 @@ def test_cli_has_no_heavy_import_at_module_level():
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
             assert not any(n.split(".")[0] == "documents" for n in names)
+
+
+def test_the_checker_sees_every_import_form(tmp_path):
+    # 하위 모듈이 생겼을 때를 대비한 검사기의 시험이다. 지금 없는 경로라도 모양을 판별해야 한다.
+    inner = PACKAGE / "hancom" / "_structure_probe.py"
+    inner.write_text("", encoding="utf-8")
+    try:
+        assert list(imports_in("from documents.hancom import _structure_probe")) == [("hancom", "_structure_probe")]
+        assert list(imports_in("from documents.hancom._structure_probe import x")) == [("hancom", "_structure_probe")]
+        assert list(imports_in("import documents.hancom._structure_probe")) == [("hancom", "_structure_probe")]
+        assert list(imports_in("from documents import hancom")) == [("hancom",)]
+        assert list(imports_in("from documents.hancom import hwp_text")) == [("hancom",)]
+    finally:
+        inner.unlink()

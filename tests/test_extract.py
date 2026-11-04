@@ -433,3 +433,26 @@ def test_zip_over_total_limit_is_too_large_for_ooxml(tmp_path):
     for number in range(3):
         b.append_zeros_member(path, f"word/media/big{number}.bin", 200 * 1024 * 1024)
     assert extract.extract(path).error == "too_large"
+
+
+def test_pptx_without_presentation_relationships_is_corrupt(tmp_path):
+    # 관계 파일이 없으면 슬라이드를 하나도 못 찾는다. 빈 문서로 보고하면 조용히 내용을 잃는다.
+    path = make_pptx(tmp_path / "a.pptx", ["찾을 말"])
+    with __import__("zipfile").ZipFile(path) as source:
+        members = {name: source.read(name) for name in source.namelist() if name != "ppt/_rels/presentation.xml.rels"}
+    b.write_zip(path, members)
+    assert extract.extract(path).error == "corrupt"
+
+
+def test_pptx_with_a_dangling_slide_id_is_corrupt(tmp_path):
+    path = make_pptx(tmp_path / "a.pptx", ["하나", "둘"])
+
+    def drop_relationship(name, data):
+        if name == "ppt/_rels/presentation.xml.rels":
+            import re
+
+            return re.sub(rb'<Relationship [^>]*slides/slide2\.xml[^>]*/>', b"", data)
+        return data
+
+    b.rewrite_zip(path, drop_relationship)
+    assert extract.extract(path).error == "corrupt"

@@ -83,7 +83,7 @@ summary: query, files_scanned, documents_hit, exact_documents, spacing_only_docu
 results[]: 순위순. document(같은 폴더에서 이름이 같은 파일 묶음), filename_match(이름에 걸림, 본문 0이어도 나온다), files, other_files(묶음 안에서 안 걸린 파일), snippets.
 files[]: path, kind, exact, spacing_variants, 위치, page_basis.
   exact: 질의의 공백이 공백 묶음과 맞는 표기 일치 수.
-  spacing_variants: 글자 사이 공백까지 허용한 일치 수에서 exact를 뺀 값. `담합`이 `부담 합리화`에 걸리는 오탐도 여기 든다.
+  spacing_variants: exact 바깥에서 글자 사이 공백까지 허용해 찾은 일치 수. `담합`이 `부담 합리화`에 걸리는 오탐도 여기 든다.
   pages: 각 파일 자기 쪽이다. 파일 사이 대응을 뜻하지 않는다. []는 본문에 있으나 쪽을 정하지 못한 것, null은 쪽을 모르는 것이다.
   cells(xlsx): `시트번호:시트이름!셀` 10개까지, 나머지 수는 cells_more.
   page_basis:

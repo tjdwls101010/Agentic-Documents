@@ -58,6 +58,21 @@ def _snippet(text: str, span: tuple, context: int) -> str:
     return _SPACES.sub(" ", text[max(0, start - context) : end + context]).strip()
 
 
+def _has_match(pattern, text: str) -> bool:
+    """길이 0인 일치(`z*`)는 일치로 치지 않는다."""
+    return any(match.end() > match.start() for match in pattern.finditer(text))
+
+
+def _variant_spans(pattern, text: str, exact_spans: list) -> list:
+    """표기 일치 바깥에서 변형을 찾는다. 따로 세면 겹치는 자리에서 표기 일치 하나가 변형으로도 세진다."""
+    spans = []
+    position = 0
+    for start, end in [*exact_spans, (len(text), len(text))]:
+        spans.extend(match.span() for match in pattern.finditer(text, position, start) if match.end() > match.start())
+        position = end
+    return spans
+
+
 def _search_file(path: str, extracted, query: Query) -> dict:
     """작업자 안에서 돈다. 본문 대신 일치 수와 스니펫 후보만 돌려준다."""
     exact_pattern, loose_pattern = _patterns(query.text, query.regex, extracted.line_wrapped)
@@ -70,22 +85,18 @@ def _search_file(path: str, extracted, query: Query) -> dict:
     for unit, raw in extracted.parts:
         folded = normalize.fold(raw)
         if unmet:
-            unmet = [pattern for pattern in unmet if not pattern.search(folded)]
-        loose_spans = _spans(loose_pattern, folded)
-        if not loose_spans:
-            continue
+            unmet = [pattern for pattern in unmet if not _has_match(pattern, folded)]
         exact_spans = _spans(exact_pattern, folded)
+        variant_spans = [] if query.regex else _variant_spans(loose_pattern, folded, exact_spans)
+        if not exact_spans and not variant_spans:
+            continue
         exact_total += len(exact_spans)
-        variant_total += max(0, len(loose_spans) - len(exact_spans))
+        variant_total += len(variant_spans)
         units.append(unit)
-        for span in exact_spans[: query.snippets]:
-            if len(exact_snippets) < query.snippets:
-                exact_snippets.append({"page": unit, "exact": True, "text": _snippet(folded, span, query.context)})
-        if len(variant_snippets) < query.snippets:
-            known = set(exact_spans)
-            for span in loose_spans:
-                if span not in known and len(variant_snippets) < query.snippets:
-                    variant_snippets.append({"page": unit, "exact": False, "text": _snippet(folded, span, query.context)})
+        for span in exact_spans[: query.snippets - len(exact_snippets)]:
+            exact_snippets.append({"page": unit, "exact": True, "text": _snippet(folded, span, query.context)})
+        for span in variant_spans[: query.snippets - len(variant_snippets)]:
+            variant_snippets.append({"page": unit, "exact": False, "text": _snippet(folded, span, query.context)})
     hit = bool(units) and not unmet
     return {
         "kind": extracted.kind,
@@ -100,7 +111,7 @@ def _search_file(path: str, extracted, query: Query) -> dict:
 def _matching_pages(path: str, query: Query, binary: str) -> list:
     """작업자 안에서 rhwp 쪽 글에 주 질의를 대조한다. 줄바꿈은 조판 줄이므로 넘는다. --and의 말은 쪽 표시에 쓰지 않는다."""
     pattern = _patterns(query.text, query.regex, True)[1]
-    return [number for number, text in enumerate(rhwp.page_texts(path, binary), 1) if pattern.search(normalize.fold(text))]
+    return [number for number, text in enumerate(rhwp.page_texts(path, binary), 1) if _has_match(pattern, normalize.fold(text))]
 
 
 def _page_job(path: str, query: Query, binary: str):
@@ -168,7 +179,7 @@ def _build_documents(targets, found_by_path, query: Query) -> list:
     documents = []
     for (_, stem), members in groups.items():
         files = [_file_entry(t.path, found_by_path[t.path]) for t in members if found_by_path.get(t.path, {}).get("hit")]
-        name_hit = bool(name_pattern and _spans(name_pattern, normalize.fold(stem)))
+        name_hit = bool(name_pattern and _has_match(name_pattern, normalize.fold(stem)))
         if not files and not name_hit:
             continue
         hit_paths = {entry["path"] for entry in files}
@@ -270,15 +281,14 @@ def run(paths, glob, query: Query, *, limit: int = 20, offset: int = 0) -> dict:
     picked = _fit(picked)
     next_position = offset + len(picked)
     results = [{key: value for key, value in document.items() if not key.startswith("_")} for document in picked]
-    has_body = lambda document: document["files"]  # noqa: E731
     return {
         "summary": {
             "query": query.text,
             "files_scanned": len(discovery.targets),
             "documents_hit": len(documents),
             "exact_documents": sum(1 for d in documents if any(e["exact"] for e in d["files"])),
-            "spacing_only_documents": sum(1 for d in documents if has_body(d) and not any(e["exact"] for e in d["files"])),
-            "filename_only_documents": sum(1 for d in documents if not has_body(d)),
+            "spacing_only_documents": sum(1 for d in documents if d["files"] and not any(e["exact"] for e in d["files"])),
+            "filename_only_documents": sum(1 for d in documents if not d["files"]),
             "seconds": round(time.monotonic() - started, 1),
             "by_folder": _by_folder(documents),
             "returned": len(results),

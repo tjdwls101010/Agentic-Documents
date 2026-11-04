@@ -535,3 +535,32 @@ def test_pep723_environment_runs_the_real_entry_point(tmp_path):
     completed = subprocess.run(["uv", "run", str(CLI), "search", "찾는말", str(tmp_path)], capture_output=True, text=True, cwd=tmp_path, timeout=300)
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout)["summary"]["documents_hit"] == 1
+
+
+# ---------- 독립 검토에서 재현한 사례 ----------
+def test_and_regex_matching_only_empty_is_not_met(cli, tmp_path):
+    docx(tmp_path / "a.docx", "hello " + LONG)
+    assert cli("search", "hello", tmp_path, "--regex", "--and", "q*").json["results"] == []
+
+
+def test_page_marking_ignores_empty_regex_matches(cli, tmp_path, fake_rhwp):
+    hwp(tmp_path / "a.hwp", "aaa " + LONG)
+    entry = cli("search", "a*", tmp_path, "--regex", path_prefix=fake_rhwp, env={"FAKE_RHWP_PAGES": json.dumps(["bbb", "aaa"])}).json["results"][0]["files"][0]
+    assert entry["pages"] == [2]
+
+
+@pytest.mark.parametrize(
+    "body, query, expected",
+    [
+        ("담합 담 합 담합", "담합", (2, 1)),  # 표기 둘, 변형 하나
+        ("a aa", "aa", (1, 0)),  # 앞의 `a a`가 뒤의 표기 일치를 삼키면 안 된다
+        ("aa aa", "aa", (2, 0)),
+        ("a aa a", "aa", (1, 0)),  # 변형을 따로 세면 표기 일치 하나가 변형 하나로도 세진다
+        ("a a", "aa", (0, 1)),
+        ("aa a a aa", "aa", (2, 1)),
+    ],
+)
+def test_exact_is_found_first_and_variants_are_counted_outside_it(cli, tmp_path, body, query, expected):
+    docx(tmp_path / "a.docx", body + " " + LONG.replace("x", "z"))
+    file = cli("search", query, tmp_path).json["results"][0]["files"][0]
+    assert (file["exact"], file["spacing_variants"]) == expected

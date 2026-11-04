@@ -248,7 +248,10 @@ def _slide_order(archive) -> list:
 
     with archive.open("ppt/presentation.xml") as stream:
         _parser(start).ParseFile(stream)
-    return [relationships[rid][1] for rid in ids if rid in relationships]
+    # 슬라이드 ID가 가리키는 파트를 못 찾으면 그 슬라이드를 조용히 버리지 않고 손상으로 보고한다.
+    if any(rid not in relationships for rid in ids):
+        raise DocumentError("corrupt")
+    return [relationships[rid][1] for rid in ids]
 
 
 _SLIDE_TEXT_RELATIONS = {"notesSlide", "diagramData", "chart"}
