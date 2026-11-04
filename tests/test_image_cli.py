@@ -271,3 +271,32 @@ def test_image_help_states_the_contract(cli):
 def test_docx_with_no_media_is_an_empty_list(cli, tmp_path):
     data = cli("image", docx(tmp_path / "a.docx", "글 " + LONG), cwd=tmp_path).json
     assert data["images"] == [] and data["skipped"] == []
+
+
+def test_dangling_gitignore_link_is_not_written_through(cli, tmp_path):
+    outside = tmp_path / "밖에생길파일"
+    (tmp_path / "작업/.documents").mkdir(parents=True)
+    (tmp_path / "작업/.documents/.gitignore").symlink_to(outside)
+    assert cli("image", pdf(tmp_path / "a.pdf", "one " + LONG), "--pages", "1", cwd=tmp_path / "작업").code == 0
+    assert not outside.exists()
+
+
+def test_hard_link_at_the_output_name_is_not_overwritten(cli, tmp_path):
+    path = make_docx_with_media(tmp_path / "a.docx", image1__png=png_bytes())
+    work = tmp_path / "작업"
+    work.mkdir()
+    made = cli("image", path, cwd=work).json["images"][0]["path"]
+    os.unlink(made)
+    victim = tmp_path / "남의파일.txt"
+    victim.write_text("지키기")
+    os.link(victim, made)
+    assert cli("image", path, cwd=work).code == 0
+    assert victim.read_text() == "지키기"
+    with Image.open(made) as image:
+        assert image.format == "PNG"
+
+
+def test_no_partial_file_is_left_behind(cli, tmp_path):
+    path = pdf(tmp_path / "a.pdf", "one " + LONG)
+    cli("image", path, "--pages", "1", cwd=tmp_path)
+    assert not [name for name in os.listdir(tmp_path / ".documents/pages") if name.endswith(".part")]

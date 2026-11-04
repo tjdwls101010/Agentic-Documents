@@ -1,4 +1,5 @@
 """image: 쪽 그림과 내장 그림을 PNG로 만든다. `.documents` 관리."""
+import contextlib
 import hashlib
 import io
 import os
@@ -33,7 +34,7 @@ def _prepare_default_folder() -> Path:
     except OSError as error:
         raise Unreadable("io", f"작업 폴더에 그림을 쓸 수 없다: {error}. `--out-dir`로 쓸 곳을 준다") from error
     ignore = base / ".gitignore"
-    if not ignore.exists():
+    if not os.path.lexists(ignore):
         try:
             ignore.write_text("*\n", encoding="utf-8")
         except OSError:
@@ -68,6 +69,20 @@ def _already_made(target: Path) -> bool:
     return target.exists() and target.stat().st_size > 0
 
 
+@contextlib.contextmanager
+def _replacing(target: Path):
+    """임시 파일에 쓰고 끝나면 바꿔 넣는다. 중단돼도 잘린 그림이 남지 않고, 그 자리의 링크를 따라 쓰지 않는다."""
+    partial = target.with_name(target.name + ".part")
+    if os.path.lexists(partial):
+        partial.unlink()
+    try:
+        yield partial
+        os.replace(partial, target)
+    finally:
+        if os.path.lexists(partial):
+            partial.unlink()
+
+
 def _size_of(path: Path) -> tuple:
     from PIL import Image
 
@@ -93,7 +108,8 @@ def _render_pdf(path: str, pages, folder_of, prefix: str) -> dict:
             if _already_made(target):
                 width, height = _size_of(target)
             else:
-                width, height = pdf.render_page(path, page, target)
+                with _replacing(target) as partial:
+                    width, height = pdf.render_page(path, page, partial)
             images.append({"page": page, "path": str(target.resolve()), "width": width, "height": height, "source_name": None})
     except pdf.DocumentError as error:
         raise Unreadable(error.reason, f"PDF를 열 수 없다: {error.reason}") from error
@@ -118,7 +134,8 @@ def _render_hancom(path: str, kind: str, pages, folder_of, prefix: str) -> dict:
         for page in pages:
             target = folder / f"{prefix}_p{page:04}.png"
             if not _already_made(target):
-                rhwp.render_page(path, binary, page, target)
+                with _replacing(target) as partial:
+                    rhwp.render_page(path, binary, page, partial)
             width, height = _size_of(target)
             images.append({"page": page, "path": str(target.resolve()), "width": width, "height": height, "source_name": None})
     except rhwp.ToolError as error:
@@ -158,11 +175,11 @@ def _write_member(path: str, member: str, page, folder: Path, prefix: str, used:
                     candidate = f"{stem}_{counter}{suffix}"
                 used.add(candidate)
                 target = folder / candidate
-                _already_made(target)
-                if image_format in _KEPT_FORMATS:
-                    target.write_bytes(data)
-                else:
-                    image.save(target, "PNG")  # BMP 등은 Read가 못 여니 PNG로 바꾼다
+                with _replacing(target) as partial:
+                    if image_format in _KEPT_FORMATS:
+                        partial.write_bytes(data)
+                    else:
+                        image.save(partial, "PNG")  # BMP 등은 Read가 못 여니 PNG로 바꾼다
     except OSError as error:
         if isinstance(error, PermissionError):
             raise Unreadable("io", f"그림을 쓸 수 없다: {error}. `--out-dir`로 쓸 곳을 준다") from error
