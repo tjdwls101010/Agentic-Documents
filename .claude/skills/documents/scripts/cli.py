@@ -88,7 +88,7 @@ files[]: path, kind, exact, spacing_variants, 위치, page_basis.
   cells(xlsx): `시트번호:시트이름!셀` 10개까지, 나머지 수는 cells_more.
   page_basis:
     physical: pdf 물리 쪽 순서. 인쇄된 쪽 번호와 다를 수 있다.
-    estimated: hwp·hwpx의 rhwp 조판 기준. 약 9%가 실제와 어긋난다.
+    estimated: hwp·hwpx의 rhwp 조판 기준. 같은 이름 PDF와 어긋나는 쪽이 있다(표본 4~9%).
     slide: pptx 표시 순서. sheet: xlsx 시트 순서. none: docx이거나 쪽을 정할 도구가 없다.
 snippets[]: path, page(hwp·hwpx는 null, xlsx는 칸 주소), exact, text. text는 접은 글이고 exact가 먼저 온다. 같은 글은 묶음 안에서 한 번만 나온다.
 coverage: 이번 실행이 못 본 범위. 목록은 20개까지이고 나머지 수는 more다. 비어 있어도 그림 속 글자는 본 적이 없다.
