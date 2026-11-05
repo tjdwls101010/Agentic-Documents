@@ -339,9 +339,21 @@ def test_hwp_crop_renders_larger_then_cuts(cli, tmp_path, fake_rhwp):
     assert (entry["width"], entry["height"]) == (240, 160)
 
 
-@pytest.mark.parametrize("value", ["1,2,3", "a,b,c,d", "0.5,0,0.5,1", "0,0,1,1.5", "-0.1,0,1,1", "0.9,0,0.1,1"])
+@pytest.mark.parametrize("value", ["1,2,3", "a,b,c,d", "0.5,0,0.5,1", "0,0,1,1.5", "-0.1,0,1,1", "0.9,0,0.1,1", "0.5,0.5,0.5000000001,0.5000000001", "0.1,0.1,0.100001,0.5", "nan,0,1,1", "0,0,inf,1"])
 def test_bad_crop_is_exit_2(cli, tmp_path, value):
     assert cli("image", pdf(tmp_path / "a.pdf", "one " + LONG), "--pages", "1", f"--crop={value}", cwd=tmp_path).code == 2
+
+
+def test_smallest_allowed_crop_shows_the_page_content(cli, tmp_path):
+    # 극단적인 배율에서 렌더러가 빈 그림을 내면 안 된다(독립 검토 재현). 쪽 전체가 빨간 PDF로 본다.
+    path = b.write_pdf_stream(tmp_path / "빨강.pdf", b"1 0 0 rg 0 0 612 792 re f")
+    entry = rendered(cli, path, "--pages", "1", "--crop", "0.5,0.5,0.51,0.51", cwd=tmp_path)[0]
+    with Image.open(entry["path"]) as image:
+        assert image.convert("RGB").getpixel((image.width // 2, image.height // 2)) == (255, 0, 0)
+
+
+def test_image_help_states_the_zoom_limit(cli):
+    assert "8배" in cli("image", "--help").out
 
 
 def test_crop_on_embedded_formats_is_exit_2(cli, tmp_path):

@@ -26,6 +26,7 @@ EXIT_UNREADABLE = 3
 EXIT_TOOL = 4
 EXIT_INTERRUPTED = 130
 _PAGE_NUMBER_LIMIT = 1_000_000
+_CROP_MIN = 0.01  # 더 작으면 렌더러가 빈 그림을 내거나 잘린 결과가 비어 버린다
 
 _ARGPARSE_KOREAN = {
     "usage: ": "사용법: ",
@@ -85,6 +86,8 @@ def _crop(text):
         raise argparse.ArgumentTypeError(f"--crop은 왼,위,오른,아래 비율 넷이다(예: 0,0.1,1,0.4): {text}") from error
     if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
         raise argparse.ArgumentTypeError(f"--crop은 0 이상 1 이하이고 왼<오른, 위<아래이다: {text}")
+    if right - left < _CROP_MIN - 1e-9 or bottom - top < _CROP_MIN - 1e-9:
+        raise argparse.ArgumentTypeError(f"--crop 영역이 너무 작다. 가로세로 모두 쪽의 1% 이상이어야 한다: {text}")
     return left, top, right, bottom
 
 
@@ -122,7 +125,7 @@ files[]: path, kind, exact, spacing_variants, 위치, page_basis.
     physical: pdf 물리 쪽 순서. 인쇄된 쪽 번호와 다를 수 있다.
     estimated: hwp·hwpx의 rhwp 조판 기준. 같은 이름 PDF와 어긋나는 쪽이 있다(표본 4~9%).
     slide: pptx 표시 순서. sheet: xlsx 시트 순서. none: docx이거나 쪽을 정할 도구가 없다.
-snippets[]: kind(어느 파일인지), page(hwp·hwpx는 null, xlsx는 칸 주소), exact, text. text는 접은 글이고 exact가 먼저 온다. 같은 글은 묶음 안에서 한 번만 나온다.
+snippets[]: file(files 안의 순번, 0부터), page(hwp·hwpx는 null, xlsx는 칸 주소), exact, text. text는 접은 글이고 exact가 먼저 온다. 같은 글은 묶음 안에서 한 번만 나온다.
 coverage: 이번 실행이 못 본 범위. 목록은 5개까지이고 나머지 수는 more이며 --offset이 0이 아니면 수만 준다. 전부 보려면 --coverage-only를 쓴다. 비어 있어도 그림 속 글자는 본 적이 없다.
   unreadable: 못 읽은 파일. reason은 encrypted, distribution(배포용), corrupt, not_a_document, unsupported, too_large, timeout, crashed, io.
   no_text: 읽었지만 공백 뺀 글자가 50 미만인 파일.
@@ -262,7 +265,7 @@ def _build_parser():
     image = commands.add_parser("image", help="쪽 그림 또는 내장 그림을 만든다", description=_IMAGE_HELP, formatter_class=_formatter)
     image.add_argument("file", metavar="FILE", help="대상 파일")
     image.add_argument("--pages", metavar="R", type=_page_range, help="쪽 또는 슬라이드(3, 1-5, 1,3,5-7). 쪽은 1부터다. 범위는 쓰는 쪽이 정한다")
-    image.add_argument("--crop", metavar="L,T,R,B", type=_crop, help="pdf·hwp·hwpx 전용. 쪽의 이 영역만 긴 변까지 확대해 그린다. 왼,위,오른,아래를 쪽 대비 0~1 비율로 준다(원점은 왼쪽 위, 예: 0,0.1,1,0.4)")
+    image.add_argument("--crop", metavar="L,T,R,B", type=_crop, help="pdf·hwp·hwpx 전용. 쪽의 이 영역만 긴 변 1568px까지 확대해 그린다(hwp·hwpx는 쪽 기본 크기의 8배까지라 작은 영역은 더 작게 나온다). 왼,위,오른,아래를 쪽 대비 0~1 비율로 주고 가로세로 모두 1%% 이상이다(원점은 왼쪽 위, 예: 0,0.1,1,0.4)")
     image.add_argument("--out-dir", metavar="D", help="그림을 쓸 폴더. 없으면 만든다")
 
     text = commands.add_parser("text", help="뽑은 글자를 흘려보낸다", description=_TEXT_HELP, formatter_class=_formatter)

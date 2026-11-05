@@ -141,7 +141,7 @@ def _file_entry(path: str, found: dict) -> dict:
 def _merge_snippets(files, found_by_path, limit: int) -> list:
     """exact를 먼저 두고 묶음 안의 같은 글은 한 번만 낸다."""
     # 경로는 files에 있다. 스니펫마다 되풀이하면 출력의 절반이 경로가 되어 문맥 비용으로 돌아온다.
-    candidates = [{"kind": entry["kind"], **snippet} for entry in files for snippet in found_by_path[entry["path"]]["snippets"]]
+    candidates = [{"file": index, **snippet} for index, entry in enumerate(files) for snippet in found_by_path[entry["path"]]["snippets"]]
     candidates.sort(key=lambda snippet: not snippet["exact"])
     picked = []
     seen = set()

@@ -580,8 +580,20 @@ def test_long_paths_are_not_repeated_in_a_result(cli, tmp_path):
     doc = cli("search", "찾는말", folder, cwd=tmp_path).json["results"][0]
     assert doc["document"] == "보도"
     assert all("path" not in snippet for snippet in doc["snippets"])
-    assert doc["snippets"][0]["kind"] in ("hwp", "hwpx")
+    assert doc["files"][doc["snippets"][0]["file"]]["kind"] in ("hwp", "hwpx")
     assert sum(json.dumps(doc, ensure_ascii=False).count("긴폴더이름" * 8) for _ in [0]) == 3  # 파일 셋의 경로에만
+
+
+def test_snippet_points_to_its_file_even_with_two_of_the_same_kind(cli, tmp_path):
+    # 이름이 공백만 달라 한 묶음이 된 같은 형식 둘(독립 검토 재현).
+    docx(tmp_path / "same.docx", "needle alpha " + LONG)
+    docx(tmp_path / "same .docx", "needle beta " + LONG)
+    doc = cli("search", "needle", tmp_path).json["results"][0]
+    assert len(doc["files"]) == 2 and len(doc["snippets"]) == 2
+    for snippet in doc["snippets"]:
+        word = "alpha" if "alpha" in snippet["text"] else "beta"
+        expected = "same.docx" if word == "alpha" else "same .docx"
+        assert os.path.basename(doc["files"][snippet["file"]]["path"]) == expected
 
 
 def test_coverage_lists_only_on_the_first_page(cli, tmp_path):
