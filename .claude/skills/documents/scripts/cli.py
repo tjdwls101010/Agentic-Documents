@@ -36,6 +36,7 @@ _ARGPARSE_KOREAN = {
     "the following arguments are required: %s": "필수 인자가 없다: %s",
     "unrecognized arguments: %s": "알 수 없는 인자: %s",
     "expected one argument": "값이 하나 필요하다",
+    "argument %(argument_name)s: %(message)s": "%(argument_name)s: %(message)s",
     "invalid %(type)s value: %(value)r": "값이 잘못되었다(%(type)s): %(value)r",
     "invalid choice: %(value)r (choose from %(choices)s)": "없는 선택지: %(value)r (고를 수 있는 값: %(choices)s)",
     "%(prog)s: error: %(message)s\n": "%(prog)s: 오류: %(message)s\n",

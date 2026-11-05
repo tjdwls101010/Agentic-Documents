@@ -613,3 +613,8 @@ def test_max_chars_lets_one_call_return_everything(cli, tmp_path):
     assert 0 < capped["summary"]["returned"] < 30
     everything = cli("search", "찾는말", tmp_path, "--limit", "30", "--context", "300", "--max-chars", "1000000").json
     assert everything["summary"]["returned"] == 30 and everything["summary"]["next_offset"] is None
+
+
+def test_argument_errors_are_in_korean(cli, tmp_path):
+    result = cli("search", "말", tmp_path, "--limit", "0")
+    assert result.code == 2 and "argument" not in result.err
