@@ -152,10 +152,11 @@ def page_layouts(path, pages) -> dict:
         document.close()
 
 
-def render_page(path, number: int, target, long_side: int = 1568) -> tuple:
-    """쪽을 긴 변 long_side로 그려 PNG로 쓰고 (너비, 높이)를 준다."""
+def render_page(path, number: int, target, long_side: int = 1568, crop=None) -> tuple:
+    """쪽을 그려 PNG로 쓰고 (너비, 높이)를 준다. crop(왼, 위, 오른, 아래, 쪽 대비 비율)이면 그 영역을 긴 변 long_side로 확대한다."""
     import pypdfium2
 
+    left, top, right, bottom = crop or (0.0, 0.0, 1.0, 1.0)
     document = _open(path)
     try:
         try:
@@ -163,8 +164,10 @@ def render_page(path, number: int, target, long_side: int = 1568) -> tuple:
         except pypdfium2.PdfiumError as error:
             raise DocumentError("corrupt") from error
         try:
-            scale = long_side / max(page.get_size())
-            image = page.render(scale=scale).to_pil()
+            width, height = page.get_size()
+            scale = long_side / max(width * (right - left), height * (bottom - top))
+            cut = (left * width, (1 - bottom) * height, (1 - right) * width, top * height)
+            image = page.render(scale=scale, crop=cut).to_pil()
         finally:
             page.close()
     finally:

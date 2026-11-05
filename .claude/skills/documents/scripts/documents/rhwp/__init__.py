@@ -134,13 +134,13 @@ def page_count(path, binary: str) -> int:
     return len(page_texts(path, binary))
 
 
-def render_page(path, binary: str, page: int, target) -> None:
-    """쪽(1기준)을 PNG로 그려 target에 옮긴다. 한 쪽이면 `원본이름.png`가 되므로 빈 임시 폴더에서 집는다."""
+def render_page(path, binary: str, page: int, target, scale: float = 1.0) -> None:
+    """쪽(1기준)을 배율 scale로 그려 target에 옮긴다. 한 쪽이면 `원본이름.png`가 되므로 빈 임시 폴더에서 집는다."""
     with tempfile.TemporaryDirectory(prefix="documents-rhwp-") as folder:
         link = _short_link(path, folder)
         output = os.path.join(folder, "out")
         try:
-            completed = _run([binary, "export-png", link, "-o", output, "-p", str(page - 1), "--vlm-target", "claude"], timeout=_PNG_TIMEOUT)
+            completed = _run([binary, "export-png", link, "-o", output, "-p", str(page - 1), "--scale", f"{scale:g}"], timeout=_PNG_TIMEOUT)
         except OSError as error:
             raise ToolError(str(error)) from error
         if completed.returncode != 0:

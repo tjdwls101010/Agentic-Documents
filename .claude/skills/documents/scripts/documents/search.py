@@ -140,7 +140,8 @@ def _file_entry(path: str, found: dict) -> dict:
 
 def _merge_snippets(files, found_by_path, limit: int) -> list:
     """exact를 먼저 두고 묶음 안의 같은 글은 한 번만 낸다."""
-    candidates = [{"path": entry["path"], **snippet} for entry in files for snippet in found_by_path[entry["path"]]["snippets"]]
+    # 경로는 files에 있다. 스니펫마다 되풀이하면 출력의 절반이 경로가 되어 문맥 비용으로 돌아온다.
+    candidates = [{"file": index, **snippet} for index, entry in enumerate(files) for snippet in found_by_path[entry["path"]]["snippets"]]
     candidates.sort(key=lambda snippet: not snippet["exact"])
     picked = []
     seen = set()
@@ -161,7 +162,7 @@ def _rank(document: dict) -> tuple:
         -max((entry["exact"] for entry in files), default=0),
         -max((entry["spacing_variants"] for entry in files), default=0),
         not document["filename_match"],
-        document["document"],
+        document["_path"],
     )
 
 
@@ -185,12 +186,13 @@ def _build_documents(targets, found_by_path, query: Query) -> list:
         hit_paths = {entry["path"] for entry in files}
         documents.append(
             {
-                "document": os.path.join(os.path.dirname(members[0].path), stem),
+                "document": stem,
                 "filename_match": name_hit,
                 "files": files,
                 "other_files": [t.path for t in members if t.path not in hit_paths],
                 "snippets": _merge_snippets(files, found_by_path, query.snippets),
                 "_folder": members[0].relative.split(os.sep)[0] if os.sep in members[0].relative else ".",
+                "_path": os.path.join(os.path.dirname(members[0].path), stem),
             }
         )
     documents.sort(key=_rank)
@@ -226,13 +228,13 @@ def _size(document: dict) -> int:
     return len(json.dumps(document, ensure_ascii=False))
 
 
-def _fit(documents: list) -> list:
+def _fit(documents: list, max_chars: int) -> list:
     """결과가 상한을 넘으면 자른다. 최소 한 건은 내보내 이어 받기가 항상 진행한다."""
     picked = []
     used = 0
     for document in documents:
         used += _size(document)
-        if picked and used > RESULTS_CHAR_LIMIT:
+        if picked and used > max_chars:
             break
         picked.append(document)
     return picked
@@ -269,16 +271,16 @@ def coverage_records(paths, glob, query: Query):
     return coverage.records()
 
 
-def run(paths, glob, query: Query, *, limit: int = 20, offset: int = 0) -> dict:
+def run(paths, glob, query: Query, *, limit: int = 20, offset: int = 0, max_chars: int = RESULTS_CHAR_LIMIT) -> dict:
     validate(query)
     started = time.monotonic()
     discovery, coverage, found_by_path = _scan_all(paths, glob, query)
     documents = _build_documents(discovery.targets, found_by_path, query)
     notes = []
     window = documents[offset : offset + limit]
-    picked = _fit(window)
+    picked = _fit(window, max_chars)
     _resolve_hancom_pages(picked, query, notes)
-    picked = _fit(picked)
+    picked = _fit(picked, max_chars)
     next_position = offset + len(picked)
     results = [{key: value for key, value in document.items() if not key.startswith("_")} for document in picked]
     return {
@@ -296,5 +298,5 @@ def run(paths, glob, query: Query, *, limit: int = 20, offset: int = 0) -> dict:
             "notes": notes,
         },
         "results": results,
-        "coverage": coverage.summary(),
+        "coverage": coverage.summary(list_items=offset == 0),
     }

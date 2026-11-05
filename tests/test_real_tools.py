@@ -94,7 +94,7 @@ def test_real_image_of_hwp_page(tmp_path):
     entry = data["images"][0]
     assert entry["page"] == 1 and data["source"] == "render" and data["page_basis"] == "estimated"
     with Image.open(entry["path"]) as image:
-        assert image.size == (entry["width"], entry["height"]) and max(image.size) >= 500
+        assert image.size == (entry["width"], entry["height"]) and max(image.size) == 1568
 
 
 def test_real_long_name_image(tmp_path):
