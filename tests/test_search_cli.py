@@ -451,6 +451,10 @@ def test_help_is_not_rewrapped(cli):
     assert any(len(line) > 60 for line in wide.splitlines())
 
 
+def test_text_help_warns_that_pipes_need_permission(cli):
+    assert "권한" in cli("text", "--help").out
+
+
 def test_top_level_help_lists_commands(cli):
     text = cli("--help").out
     assert "search" in text and "text" in text
