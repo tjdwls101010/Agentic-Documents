@@ -97,7 +97,7 @@ _positive.__name__ = "1 이상 정수"
 _page_range.__name__ = "쪽 범위"
 _crop.__name__ = "영역"
 
-_TOP_HELP = """Read와 rg가 못 여는 문서(hwp·hwpx·pdf·docx·pptx·xlsx)를 변환 없이 찾고 읽는다. 형식이 달라도 같은 명령이다.
+_TOP_HELP = """문서(hwp·hwpx·pdf·docx·pptx·xlsx)를 변환 없이 찾고 읽는다. 형식이 달라도 같은 명령이다.
 
 명령마다 인자, 출력, 실패가 `<명령> --help`에 있다.
 """
